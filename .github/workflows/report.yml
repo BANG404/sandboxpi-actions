@@ -1,0 +1,55 @@
+name: Read private report
+on:
+  workflow_dispatch:
+    inputs:
+      run:
+        description: Public run ID and attempt, separated by a hyphen
+        required: true
+        type: string
+      recipient_key:
+        description: Base64 RSA public key for encrypted report delivery
+        required: true
+        type: string
+permissions:
+  contents: read
+  packages: read
+jobs:
+  report:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: release
+    steps:
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - name: Encrypt the private report for its operator
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+          REPORT_RUN: ${{ inputs.run }}
+          RECIPIENT_KEY: ${{ inputs.recipient_key }}
+        run: |
+          test "$GITHUB_REF" = refs/heads/main
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import {spawnSync} from 'node:child_process';
+          import {createCipheriv,randomBytes,publicEncrypt} from 'node:crypto';
+          import {mkdtempSync,readFileSync,rmSync} from 'node:fs';
+          import {tmpdir} from 'node:os';
+          import {join} from 'node:path';
+          assert.match(process.env.REPORT_RUN,/^[1-9]\d*-[1-9]\d*$/u);
+          const directory=mkdtempSync(join(tmpdir(),'private-report-'));
+          const container=`private-report-${process.env.GITHUB_RUN_ID}`;
+          function run(program,args,input){const result=spawnSync(program,args,{input,env:{...process.env,DOCKER_CONFIG:join(directory,'auth')},stdio:input?['pipe','ignore','ignore']:'ignore'});assert.equal(result.status,0,'Private report operation failed');}
+          try {
+            run('docker',['login','ghcr.io','--username','BANG404','--password-stdin'],process.env.GHCR_TOKEN);
+            const image=`ghcr.io/bang404/sandboxpi-ci-data:report-${process.env.REPORT_RUN}`;
+            run('docker',['pull',image]);
+            run('docker',['create','--name',container,image,'/unused']);
+            run('docker',['cp',`${container}:/payload.tar.zst`,join(directory,'payload.tar.zst')]);
+            const key=randomBytes(32),iv=randomBytes(12);
+            const cipher=createCipheriv('aes-256-gcm',key,iv);
+            const data=Buffer.concat([cipher.update(readFileSync(join(directory,'payload.tar.zst'))),cipher.final()]);
+            const encryptedKey=publicEncrypt({key:Buffer.from(process.env.RECIPIENT_KEY,'base64'),oaepHash:'sha256'},key);
+            console.log('PRIVATE_REPORT_ENVELOPE '+JSON.stringify({key:encryptedKey.toString('base64'),iv:iv.toString('base64'),tag:cipher.getAuthTag().toString('base64'),data:data.toString('base64')}));
+          } finally {spawnSync('docker',['rm','--force',container],{stdio:'ignore'});rmSync(directory,{recursive:true,force:true});}
+          JS
