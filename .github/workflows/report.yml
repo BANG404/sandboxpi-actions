@@ -50,6 +50,8 @@ jobs:
             const cipher=createCipheriv('aes-256-gcm',key,iv);
             const data=Buffer.concat([cipher.update(readFileSync(join(directory,'payload.tar.zst'))),cipher.final()]);
             const encryptedKey=publicEncrypt({key:Buffer.from(process.env.RECIPIENT_KEY,'base64'),oaepHash:'sha256'},key);
-            console.log('PRIVATE_REPORT_ENVELOPE '+JSON.stringify({key:encryptedKey.toString('base64'),iv:iv.toString('base64'),tag:cipher.getAuthTag().toString('base64'),data:data.toString('base64')}));
+            console.log('PRIVATE_REPORT_ENVELOPE '+JSON.stringify({key:encryptedKey.toString('base64'),iv:iv.toString('base64'),tag:cipher.getAuthTag().toString('base64'),bytes:data.length}));
+            const encoded=data.toString('base64');
+            for(let offset=0;offset<encoded.length;offset+=16000) console.log(`PRIVATE_REPORT_CHUNK ${offset/16000} ${encoded.slice(offset,offset+16000)}`);
           } finally {spawnSync('docker',['rm','--force',container],{stdio:'ignore'});rmSync(directory,{recursive:true,force:true});}
           JS
