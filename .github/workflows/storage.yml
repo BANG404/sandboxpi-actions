@@ -1,0 +1,26 @@
+name: Initialize storage placeholders
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  packages: write
+jobs:
+  initialize:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: release
+    steps:
+      - name: Publish empty placeholders only
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          test "$GITHUB_REF" = refs/heads/main
+          directory=$(mktemp -d)
+          trap 'rm -rf "$directory"' EXIT
+          export DOCKER_CONFIG="$directory/auth"
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username BANG404 --password-stdin
+          printf 'FROM scratch\nLABEL io.sandboxpi.storage-placeholder=true\n' > "$directory/Dockerfile"
+          for package in sandboxpi-ci-data sandboxpi-build-cache; do
+            docker build -t "ghcr.io/bang404/$package:privacy-seed" "$directory"
+            docker push "ghcr.io/bang404/$package:privacy-seed"
+          done
