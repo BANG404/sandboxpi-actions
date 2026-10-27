@@ -1,0 +1,123 @@
+name: Private source CI and CD
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact private main revision
+        required: true
+        type: string
+      action:
+        description: Full quality checks or verified image operation
+        required: true
+        type: choice
+        options: [ci, validate, publish]
+        default: ci
+      ags_tag:
+        description: Optional planned container version
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  runner:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    environment: release
+    concurrency:
+      group: ${{ inputs.action == 'ci' && format('quality-{0}', inputs.source_sha) || 'container-publication' }}
+      cancel-in-progress: false
+    steps:
+      - name: Validate trusted request
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          test "$GITHUB_REF" = refs/heads/main
+          [[ "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        id: source
+        with:
+          app-id: ${{ vars.CI_APP_ID }}
+          private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
+          owner: BANG404
+          repositories: sandboxpi
+          permission-contents: read
+          permission-checks: write
+      - name: Mark the private source check pending
+        id: check
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          PUBLIC_ACTION: ${{ inputs.action }}
+          SOURCE_TOKEN: ${{ steps.source.outputs.token }}
+        run: node scripts/status.mjs start
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: BANG404/sandboxpi
+          ref: ${{ inputs.source_sha }}
+          token: ${{ steps.source.outputs.token }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require a private main ancestor
+        working-directory: source
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: git merge-base --is-ancestor "$SOURCE_SHA" origin/main
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: '1.4.4'
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.27.3'
+          cache: false
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Run all quality checks with private logs and caches
+        id: quality
+        working-directory: source
+        env:
+          PUBLIC_ACTION: ci
+          PUBLIC_SOURCE_SHA: ${{ inputs.source_sha }}
+          GHCR_TOKEN: ${{ github.token }}
+        run: node scripts/public-runner.mjs
+      - uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        if: inputs.action != 'ci'
+        id: release
+        with:
+          app-id: ${{ vars.CI_APP_ID }}
+          private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
+          owner: BANG404
+          repositories: sandboxpi
+          permission-contents: write
+      - name: Verify and relay the image through private ACR
+        if: inputs.action != 'ci'
+        id: image
+        working-directory: source
+        env:
+          PUBLIC_ACTION: ${{ inputs.action }}
+          PUBLIC_SOURCE_SHA: ${{ inputs.source_sha }}
+          PUBLIC_QUALITY_COMPLETE: 'true'
+          GHCR_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ steps.release.outputs.token }}
+          ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
+          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
+          WOODPECKER_TOKEN: ${{ secrets.WOODPECKER_TOKEN }}
+          WOODPECKER_REPO_ID: ${{ vars.WOODPECKER_REPO_ID }}
+          AGS_TAG: ${{ inputs.ags_tag }}
+        run: node scripts/public-runner.mjs
+      - name: Report the private source result
+        if: always() && steps.check.outputs.check_id != ''
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          PUBLIC_ACTION: ${{ inputs.action }}
+          SOURCE_TOKEN: ${{ steps.source.outputs.token }}
+          CHECK_ID: ${{ steps.check.outputs.check_id }}
+          RUN_RESULT: ${{ steps.quality.outcome == 'success' && (inputs.action == 'ci' || steps.image.outcome == 'success') && 'success' || 'failure' }}
+        run: node scripts/status.mjs finish
