@@ -13,6 +13,12 @@ on:
         type: choice
         options: [ci, validate, publish]
         default: ci
+      channel:
+        description: Container release stage
+        required: true
+        type: choice
+        options: [alpha, beta, rc, production]
+        default: production
       ags_tag:
         description: Optional planned container version
         type: string
@@ -110,6 +116,7 @@ jobs:
           ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
           WOODPECKER_TOKEN: ${{ secrets.WOODPECKER_TOKEN }}
           WOODPECKER_REPO_ID: ${{ vars.WOODPECKER_REPO_ID }}
+          AGS_CHANNEL: ${{ inputs.channel }}
           AGS_TAG: ${{ inputs.ags_tag }}
         run: node scripts/public-runner.mjs
       - name: Report the private source result
