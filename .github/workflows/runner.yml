@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       source_sha:
-        description: Exact private main revision
+        description: Exact private trusted branch revision
         required: true
         type: string
       action:
@@ -13,9 +13,13 @@ on:
         type: choice
         options: [ci, validate, publish]
         default: ci
+      source_branch:
+        description: Trusted private source branch
+        type: choice
+        options: [alpha, beta, rc, main]
+        default: main
       channel:
         description: Container release stage
-        required: true
         type: choice
         options: [alpha, beta, rc, production]
         default: production
@@ -39,9 +43,18 @@ jobs:
       - name: Validate trusted request
         env:
           SOURCE_SHA: ${{ inputs.source_sha }}
+          SOURCE_BRANCH: ${{ inputs.source_branch }}
+          SELECTED_ACTION: ${{ inputs.action }}
+          CHANNEL: ${{ inputs.channel }}
         run: |
           test "$GITHUB_REF" = refs/heads/main
           [[ "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          case "$SOURCE_BRANCH" in
+            alpha|beta|rc) expected_channel="$SOURCE_BRANCH" ;;
+            main) expected_channel=production ;;
+            *) exit 1 ;;
+          esac
+          if [ "$SELECTED_ACTION" != ci ]; then test "$CHANNEL" = "$expected_channel"; fi
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
@@ -72,11 +85,12 @@ jobs:
           path: source
           fetch-depth: 0
           persist-credentials: false
-      - name: Require a private main ancestor
+      - name: Require the selected private branch ancestor
         working-directory: source
         env:
           SOURCE_SHA: ${{ inputs.source_sha }}
-        run: git merge-base --is-ancestor "$SOURCE_SHA" origin/main
+          SOURCE_BRANCH: ${{ inputs.source_branch }}
+        run: git merge-base --is-ancestor "$SOURCE_SHA" "origin/$SOURCE_BRANCH"
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: '1.4.4'
@@ -91,6 +105,7 @@ jobs:
         env:
           PUBLIC_ACTION: ci
           PUBLIC_SOURCE_SHA: ${{ inputs.source_sha }}
+          PUBLIC_SOURCE_BRANCH: ${{ inputs.source_branch }}
           GHCR_TOKEN: ${{ github.token }}
         run: node scripts/public-runner.mjs
       - uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
@@ -109,6 +124,7 @@ jobs:
         env:
           PUBLIC_ACTION: ${{ inputs.action }}
           PUBLIC_SOURCE_SHA: ${{ inputs.source_sha }}
+          PUBLIC_SOURCE_BRANCH: ${{ inputs.source_branch }}
           PUBLIC_QUALITY_COMPLETE: 'true'
           GHCR_TOKEN: ${{ github.token }}
           GITHUB_TOKEN: ${{ steps.release.outputs.token }}
