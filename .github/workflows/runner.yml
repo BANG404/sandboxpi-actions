@@ -128,6 +128,7 @@ jobs:
           PUBLIC_QUALITY_COMPLETE: 'true'
           GHCR_TOKEN: ${{ github.token }}
           GITHUB_TOKEN: ${{ steps.release.outputs.token }}
+          SKILL_SOURCES_TOKEN: ${{ secrets.SKILL_SOURCES_TOKEN }}
           ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
           ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
           WOODPECKER_TOKEN: ${{ secrets.WOODPECKER_TOKEN }}
