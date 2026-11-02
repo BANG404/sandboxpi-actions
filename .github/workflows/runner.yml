@@ -135,6 +135,9 @@ jobs:
           WOODPECKER_REPO_ID: ${{ vars.WOODPECKER_REPO_ID }}
           AGS_CHANNEL: ${{ inputs.channel }}
           AGS_TAG: ${{ inputs.ags_tag }}
+          TENCENTCLOUD_SECRET_ID: ${{ inputs.action == 'publish' && secrets.TENCENTCLOUD_SECRET_ID || '' }}
+          TENCENTCLOUD_SECRET_KEY: ${{ inputs.action == 'publish' && secrets.TENCENTCLOUD_SECRET_KEY || '' }}
+          TENCENTCLOUD_SESSION_TOKEN: ${{ inputs.action == 'publish' && secrets.TENCENTCLOUD_SESSION_TOKEN || '' }}
         run: node scripts/public-runner.mjs
       - name: Report the private source result
         if: always() && steps.check.outputs.check_id != ''
