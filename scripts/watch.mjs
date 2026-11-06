@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { github, repository, validateRequest } from './request.mjs';
 
-// A public-only fallback also covers PRs whose older target branch has no new dispatcher yet.
+// Trusted host requests and scheduled backup do not depend on private default-main event registration.
 export async function discover(
   environment,
   source = github(environment.SOURCE_TOKEN),

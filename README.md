@@ -86,10 +86,11 @@ Run `node --test deploy/github/public/scripts/*.test.mjs`, `bun run test:actions
 `bash -n deploy/github/public/scripts/install-trivy.sh`, and
 `bun fmt --check` on changed files from the private development checkout.
 
-`Discover private PR validation` is a public-only 15-minute fallback for channel
-branches whose older base workflow lacks the immediate dispatcher. It validates
+`Discover private PR validation` accepts on-demand requests from the trusted
+host PR timer; its public 15-minute schedule is a backup. This works independently
+of private default-main `pull_request_target` registration. It validates
 open same-repository writer PRs, exact merge/base/head metadata and existing
 current-base evidence before submitting once per input. Queued markers never
 pass gates; finalization completes them from actual results. Recent PRs leave
-two minutes for the immediate private dispatcher. PR cache keys are isolated
+two minutes for on-demand host or enabled private dispatchers. PR cache keys are isolated
 from protected-channel cache exports.
