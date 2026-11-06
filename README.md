@@ -16,7 +16,10 @@ Image channels remain alpha -> alpha, beta -> beta, rc -> rc, main -> production
 Server validation occurs before checkout, before each phase, after execution,
 and before callback success. Channel requests require source ancestry. PRs must
 be open in the same repository, target the selected channel, have the exact head
-and current base, and have a write/maintain/admin author. Forks are rejected.
+and current base, and have a write/maintain/admin author. The sole bot exception is GitHub Actions
+(login `github-actions[bot]`, ID `41898282`, type `Bot`) promoting adjacent
+protected channels with exact current source and base SHAs. Other bots, forks,
+feature heads, stale source heads and skipped/reverse stages are rejected. Forks are rejected.
 Only GitHub's merge ref is fetched and its exact merge SHA executed after its
 parents are verified as current base and requested head. Changed head, base,
 merge candidate, permissions or PR state invalidates PR success. Channel CI
