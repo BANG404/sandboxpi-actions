@@ -1,0 +1,39 @@
+name: Discover private PR validation
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: write
+concurrency:
+  group: private-pr-discovery
+  cancel-in-progress: false
+jobs:
+  discover:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: release
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        id: source
+        with:
+          app-id: ${{ vars.CI_APP_ID }}
+          private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
+          owner: BANG404
+          repositories: sandboxpi
+          permission-contents: read
+          permission-pull-requests: read
+          permission-checks: write
+      - name: Discover authenticated same-repository PR requests
+        env:
+          SOURCE_TOKEN: ${{ steps.source.outputs.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/watch.mjs

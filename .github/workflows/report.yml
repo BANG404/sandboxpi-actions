@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
     inputs:
       run:
-        description: Public run ID and attempt, separated by a hyphen
+        description: Run-attempt, optionally followed by quality, gate-NAME or image
         required: true
         type: string
       recipient_key:
@@ -36,7 +36,7 @@ jobs:
           import {mkdtempSync,readFileSync,rmSync} from 'node:fs';
           import {tmpdir} from 'node:os';
           import {join} from 'node:path';
-          assert.match(process.env.REPORT_RUN,/^[1-9]\d*-[1-9]\d*$/u);
+          assert.match(process.env.REPORT_RUN,/^[1-9]\d*-[1-9]\d*(?:-(?:quality|image|gate-(?:boundary|coverage|api|integration|security|mutation|risk)))?$/u);
           const directory=mkdtempSync(join(tmpdir(),'private-report-'));
           const container=`private-report-${process.env.GITHUB_RUN_ID}`;
           function run(program,args,input){const result=spawnSync(program,args,{input,env:{...process.env,DOCKER_CONFIG:join(directory,'auth')},stdio:input?['pipe','ignore','ignore']:'ignore'});assert.equal(result.status,0,'Private report operation failed');}
