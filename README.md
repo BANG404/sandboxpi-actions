@@ -35,7 +35,11 @@ The trusted `scripts/runtime.mjs` owns checkout, stdout/stderr capture, storage
 and report export. It never imports or runs the source `public-runner.mjs`.
 Every private child, including dependency installation, scanners and image
 commands, writes only to the private log. Public messages contain fixed phase,
-result and report identifiers. Source environments use an allowlist without
+result and report identifiers. Trusted bootstrap failures and API status details
+are recorded only in the private report, preserving failed validation status.
+Read-only API/privacy requests close connections and retry transient network or
+429/5xx failures at most three times; ambiguous callback/dispatch writes never
+retry. This avoids stale pooled connections after synchronous source commands. Source environments use an allowlist without
 checkout/package tokens, GitHub/Actions command-file variables, injected runtime
 options or release secrets. Image release credentials enter only the final
 post-quality image command. This is an ephemeral hosted execution boundary for

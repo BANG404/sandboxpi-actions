@@ -15,7 +15,13 @@ import {
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { gates, github, normalize, revalidate } from './request.mjs';
+import {
+  gates,
+  github,
+  normalize,
+  readResponse,
+  revalidate,
+} from './request.mjs';
 
 export const dataPackage = 'ghcr.io/bang404/sandboxpi-ci-data';
 export function sourceEnvironment(environment, snapshot, root, temporary) {
@@ -70,9 +76,10 @@ export function captured(
 export async function verifyPrivateStorage(packages, inspect, request = fetch) {
   for (const name of packages) {
     await inspect(`ghcr.io/bang404/${name}:privacy-seed`);
-    const response = await request(
+    const response = await readResponse(
+      request,
       `https://ghcr.io/token?service=ghcr.io&scope=repository:bang404/${name}:pull`,
-      { signal: AbortSignal.timeout(20_000) },
+      { timeoutMs: 20_000 },
     );
     assert.ok(
       [401, 403].includes(response.status),

@@ -3,11 +3,73 @@ import { test } from 'node:test';
 import {
   conclusions,
   gates,
+  github,
   normalize,
+  readResponse,
   revalidate,
   validateRequest,
 } from './request.mjs';
 import { checkDefinitions, report } from './status.mjs';
+
+test('fresh read connections recover network failures and transient statuses with a strict bound', async () => {
+  let calls = 0;
+  const sleeps = [];
+  const response = await readResponse(
+    async (_url, init) => {
+      assert.equal(init.method, 'GET');
+      assert.equal(init.headers.Connection, 'close');
+      if (++calls === 1) throw new TypeError('fetch failed');
+      return new Response(null, { status: calls === 2 ? 503 : 200 });
+    },
+    'https://api.github.com/',
+    { sleep: async (ms) => sleeps.push(ms) },
+  );
+  assert.equal(response.status, 200);
+  assert.equal(calls, 3);
+  assert.deepEqual(sleeps, [500, 1000]);
+  calls = 0;
+  await assert.rejects(
+    readResponse(
+      async () => {
+        calls++;
+        throw new TypeError('fetch failed');
+      },
+      'https://api.github.com/',
+      { sleep: async () => {} },
+    ),
+  );
+  assert.equal(calls, 3);
+});
+
+test('authorization failures and ambiguous writes are never retried', async () => {
+  for (const status of [401, 403, 404, 422]) {
+    let calls = 0;
+    const api = github(
+      'fixture',
+      async () => {
+        calls++;
+        return new Response(null, { status });
+      },
+      async () => {},
+    );
+    await assert.rejects(api('/pulls/27'), new RegExp(`HTTP ${status}`, 'u'));
+    assert.equal(calls, 1);
+  }
+  for (const method of ['POST', 'PATCH']) {
+    let calls = 0;
+    const api = github(
+      'fixture',
+      async (_url, init) => {
+        calls++;
+        assert.equal(init.method, method);
+        throw new TypeError('fetch failed');
+      },
+      async () => {},
+    );
+    await assert.rejects(api('/check-runs', method, { name: 'fixture' }));
+    assert.equal(calls, 1);
+  }
+});
 
 const head = 'a'.repeat(40),
   base = 'b'.repeat(40),

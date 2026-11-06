@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { setTimeout as delay } from 'node:timers/promises';
 
 export const repository = 'BANG404/sandboxpi';
 export const gates = [
@@ -49,23 +50,48 @@ export function normalize(environment) {
     requestId,
   };
 }
-export function github(token, request = fetch) {
+// Synchronous source commands can outlive pooled sockets. Close GET connections
+// and retry only bounded, idempotent reads; ambiguous writes are never repeated.
+export async function readResponse(
+  request,
+  url,
+  { headers = {}, timeoutMs = 30_000, sleep = delay } = {},
+) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const response = await request(url, {
+        method: 'GET',
+        headers: { ...headers, Connection: 'close' },
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      if (![429, 500, 502, 503, 504].includes(response.status) || attempt === 2)
+        return response;
+      await response.body?.cancel();
+    } catch (error) {
+      if (attempt === 2) throw error;
+    }
+    await sleep(500 * (attempt + 1));
+  }
+}
+export function github(token, request = fetch, sleep = delay) {
   assert.ok(token);
   return async (path, method = 'GET', body) => {
-    const response = await request(
-      `https://api.github.com/repos/${repository}${path}`,
-      {
-        method,
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: 'application/vnd.github+json',
-          'Content-Type': 'application/json',
-          'X-GitHub-Api-Version': '2022-11-28',
-        },
-        ...(body ? { body: JSON.stringify(body) } : {}),
-        signal: AbortSignal.timeout(30_000),
-      },
-    );
+    const url = `https://api.github.com/repos/${repository}${path}`;
+    const headers = {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/vnd.github+json',
+      'Content-Type': 'application/json',
+      'X-GitHub-Api-Version': '2022-11-28',
+    };
+    const response =
+      method === 'GET'
+        ? await readResponse(request, url, { headers, sleep })
+        : await request(url, {
+            method,
+            headers,
+            ...(body ? { body: JSON.stringify(body) } : {}),
+            signal: AbortSignal.timeout(30_000),
+          });
     assert.ok(
       response.ok,
       `Private source API operation failed: ${method} ${path} HTTP ${response.status}`,
