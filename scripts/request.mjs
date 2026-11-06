@@ -66,7 +66,10 @@ export function github(token, request = fetch) {
         signal: AbortSignal.timeout(30_000),
       },
     );
-    assert.ok(response.ok, 'Private source API operation failed');
+    assert.ok(
+      response.ok,
+      `Private source API operation failed: ${method} ${path} HTTP ${response.status}`,
+    );
     return response.json();
   };
 }

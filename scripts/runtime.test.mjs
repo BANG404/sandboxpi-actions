@@ -90,7 +90,7 @@ test('source stdout/stderr, thrown errors and command-file attacks stay in priva
           env: childEnv,
           descriptor,
         }),
-      /^Error: Private phase command failed$/u,
+      /^Error: Private phase command failed: .*status 1, error none$/u,
     );
     assert.equal(existsSync(commandFile), false);
     const output = readFileSync(log, 'utf8');
@@ -185,18 +185,25 @@ test('actual outer runtime captures malicious source output and blocks every exp
     { statuses: [401, 200], exit: 1, uploads: 0, sources: 2 },
     { statuses: [401], failSource: true, exit: 1, uploads: 4, sources: 2 },
     { statuses: [401], restoreFailure: true, exit: 1, uploads: 2, sources: 0 },
+    {
+      statuses: [401],
+      validationFailure: true,
+      exit: 1,
+      uploads: 4,
+      sources: 2,
+    },
   ]) {
     const root = directory(t),
       bin = join(root, 'bin');
     mkdirSync(bin);
     const operations = join(root, 'operations'),
       commandFile = join(root, 'summary');
-    const tool = `#!${process.execPath}\nconst fs=require('node:fs');const name=require('node:path').basename(process.argv[1]);const args=process.argv.slice(2);fs.appendFileSync(${JSON.stringify(operations)},JSON.stringify([name,...args])+'\\n');if(name==='docker'&&args[0]==='pull')process.exit(${scenario.restoreFailure ? 0 : 1});if(name==='tar'&&args.includes('-xf')&&${!!scenario.restoreFailure})process.exit(3);if(name==='tar'&&args.includes('-cf'))fs.writeFileSync(args[args.indexOf('-cf')+1],'fixture');if(name==='bun'){console.log('PRIVATE_SOURCE_STDOUT');console.error('PRIVATE_SOURCE_STDERR');console.log('::notice::PRIVATE_SOURCE_COMMAND');for(const k of ['GITHUB_OUTPUT','GITHUB_STEP_SUMMARY','GITHUB_ENV','GITHUB_PATH'])if(process.env[k])fs.appendFileSync(process.env[k],'LEAK');if(Object.keys(process.env).some(k=>/TOKEN|PASSWORD|ACTIONS_/u.test(k)))process.exit(7);if(${!!scenario.failSource}&&args[0]==='run')process.exit(3);}`;
+    const tool = `#!${process.execPath}\nconst fs=require('node:fs');const name=require('node:path').basename(process.argv[1]);const args=process.argv.slice(2);fs.appendFileSync(${JSON.stringify(operations)},JSON.stringify([name,...args])+'\\n');if(name==='docker'&&args[0]==='pull')process.exit(${scenario.restoreFailure ? 0 : 1});if(name==='tar'&&args.includes('-xf')&&${!!scenario.restoreFailure})process.exit(3);if(name==='tar'&&args.includes('-cf')){const base=args[args.indexOf('-C')+1];if(base.endsWith('/report'))fs.copyFileSync(base+'/build.log',${JSON.stringify(join(root, 'captured-report.log'))});fs.writeFileSync(args[args.indexOf('-cf')+1],'fixture');}if(name==='bun'){console.log('PRIVATE_SOURCE_STDOUT');console.error('PRIVATE_SOURCE_STDERR');console.log('::notice::PRIVATE_SOURCE_COMMAND');for(const k of ['GITHUB_OUTPUT','GITHUB_STEP_SUMMARY','GITHUB_ENV','GITHUB_PATH'])if(process.env[k])fs.appendFileSync(process.env[k],'LEAK');if(Object.keys(process.env).some(k=>/TOKEN|PASSWORD|ACTIONS_/u.test(k)))process.exit(7);if(${!!scenario.failSource}&&args[0]==='run')process.exit(3);}`;
     for (const name of ['git', 'docker', 'tar', 'bun']) {
       writeFileSync(join(bin, name), tool);
       chmodSync(join(bin, name), 0o755);
     }
-    const script = `import {runPhase} from ${JSON.stringify(runtime)};const statuses=${JSON.stringify(scenario.statuses)};let privacyIndex=0;globalThis.fetch=async url=>{if(url.includes('ghcr.io/token'))return new Response('',{status:statuses[Math.min(privacyIndex++,statuses.length-1)]});if(url.includes('/branches/'))return Response.json({commit:{sha:${JSON.stringify(snapshot.base)}}});if(url.includes('/compare/'))return Response.json({status:'ahead',merge_base_commit:{sha:${JSON.stringify(snapshot.sha)}}});throw new Error('Unexpected API');};const env=JSON.parse(process.env.FIXTURE_ENV);try{await runPhase(env)}catch{console.log('Generic failure');process.exitCode=1}`;
+    const script = `import {runPhase} from ${JSON.stringify(runtime)};const statuses=${JSON.stringify(scenario.statuses)};let privacyIndex=0,branchReads=0;globalThis.fetch=async url=>{if(url.includes('ghcr.io/token'))return new Response('',{status:statuses[Math.min(privacyIndex++,statuses.length-1)]});if(url.includes('/branches/')){if(++branchReads>1&&${!!scenario.validationFailure})throw new Error('PRIVATE_VALIDATION_FAILURE');return Response.json({commit:{sha:${JSON.stringify(snapshot.base)}}});}if(url.includes('/compare/'))return Response.json({status:'ahead',merge_base_commit:{sha:${JSON.stringify(snapshot.sha)}}});throw new Error('Unexpected API');};const env=JSON.parse(process.env.FIXTURE_ENV);try{await runPhase(env)}catch{console.log('Generic failure');process.exitCode=1}`;
     const childEnvironment = {
       ...env,
       SOURCE_SNAPSHOT: JSON.stringify(snapshot),
@@ -233,6 +240,11 @@ test('actual outer runtime captures malicious source output and blocks every exp
     const sources = commands.filter(([name]) => name === 'bun');
     assert.equal(uploads.length, scenario.uploads);
     assert.equal(sources.length, scenario.sources);
+    if (scenario.validationFailure)
+      assert.match(
+        readFileSync(join(root, 'captured-report.log'), 'utf8'),
+        /Private bootstrap failure:.*PRIVATE_VALIDATION_FAILURE/u,
+      );
   }
 });
 

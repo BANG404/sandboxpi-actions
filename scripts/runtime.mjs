@@ -10,6 +10,7 @@ import {
   openSync,
   rmSync,
   writeFileSync,
+  writeSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -60,7 +61,10 @@ export function captured(
     killSignal: 'SIGKILL',
   });
   const ok = !result.error && result.status === 0;
-  if (!ok && !optional) throw new Error('Private phase command failed');
+  if (!ok && !optional)
+    throw new Error(
+      `Private phase command failed: ${program}, status ${result.status}, error ${result.error?.message || 'none'}`,
+    );
   return ok;
 }
 export async function verifyPrivateStorage(packages, inspect, request = fetch) {
@@ -324,7 +328,11 @@ export async function runPhase(environment) {
         childEnv.PATH = `${childEnv.RUNNER_TEMP}/trivy-bin:${childEnv.PATH}`;
     }
     await revalidate(snapshot, github(environment.SOURCE_TOKEN));
-  } catch {
+  } catch (error) {
+    writeSync(
+      descriptor,
+      `\nPrivate bootstrap failure: ${error?.stack || String(error)}\n`,
+    );
     failure = true;
   } finally {
     try {
@@ -334,7 +342,11 @@ export async function runPhase(environment) {
         );
         bundle(keys.cache, cachePaths, root);
       }
-    } catch {
+    } catch (error) {
+      writeSync(
+        descriptor,
+        `\nPrivate cache export failure: ${error?.stack || String(error)}\n`,
+      );
       failure = true;
     }
     try {
