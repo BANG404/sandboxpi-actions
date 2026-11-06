@@ -10,6 +10,87 @@ import {
   validateRequest,
 } from './request.mjs';
 import { checkDefinitions, report } from './status.mjs';
+import {
+  promotionFixture,
+  promotionRejections,
+  rejectedPromotionPairs,
+} from './promotion-fixtures.mjs';
+
+test('public validation accepts all three exact protected Actions promotions without collaborator lookup', async () => {
+  for (const [source, target] of [
+    ['alpha', 'beta'],
+    ['beta', 'rc'],
+    ['rc', 'main'],
+  ]) {
+    const f = promotionFixture(source, target);
+    const result = await validateRequest(f.input, f.api);
+    assert.equal(result.candidate, f.values.pull.merge_commit_sha);
+    assert.equal(result.ref, 'refs/pull/37/merge');
+    assert.deepEqual(f.calls, [
+      `branches/${target}`,
+      'pulls/37',
+      `branches/${source}`,
+      'git/ref/pull/37/merge',
+      `git/commits/${result.candidate}`,
+    ]);
+    await revalidate(result, f.api);
+    f.values.source.commit.sha = 'd'.repeat(40);
+    await assert.rejects(revalidate(result, f.api));
+  }
+});
+
+test('public promotion validation rejects identity, topology and branch attacks', async (t) => {
+  for (const [source, target] of rejectedPromotionPairs) {
+    const f = promotionFixture(source, target);
+    await assert.rejects(validateRequest(f.input, f.api));
+    assert.deepEqual(f.calls, [`branches/${target}`, 'pulls/37']);
+  }
+  for (const [name, change] of promotionRejections)
+    await t.test(name, async () => {
+      const f = promotionFixture();
+      change(f.values);
+      await assert.rejects(validateRequest(f.input, f.api));
+    });
+});
+
+test('bot promotions retain exact PR head/base, mergeability and merge parents', async () => {
+  for (const change of [
+    (v) => (v.pull.head.sha = 'd'.repeat(40)),
+    (v) => (v.pull.base.sha = 'd'.repeat(40)),
+    (v) => (v.pull.mergeable = null),
+    (v) => (v.pull.mergeable = false),
+    (v) => (v.pull.merge_commit_sha = ''),
+    (v) => (v.ref.object.sha = 'd'.repeat(40)),
+    (v) => v.commit.parents.reverse(),
+    (v) => v.commit.parents.pop(),
+    (v) => v.commit.parents.push({ sha: 'd'.repeat(40) }),
+  ]) {
+    const f = promotionFixture();
+    change(f.values);
+    await assert.rejects(validateRequest(f.input, f.api));
+  }
+  for (const permission of ['write', 'maintain', 'admin']) {
+    const f = promotionFixture();
+    f.values.pull.user = { login: 'writer', type: 'User' };
+    f.values.permission.permission = permission;
+    await validateRequest(f.input, f.api);
+    assert.ok(f.calls.includes('collaborators/writer/permission'));
+    assert.ok(!f.calls.includes('branches/alpha'));
+  }
+});
+
+test('public promotions fail closed on every validation read error', async () => {
+  const f = promotionFixture();
+  await validateRequest(f.input, f.api);
+  for (const path of [...f.calls])
+    await assert.rejects(
+      validateRequest(f.input, async (requested) => {
+        if (requested === `/${path}`) throw new Error('API unavailable');
+        return f.api(requested);
+      }),
+      /API unavailable/u,
+    );
+});
 
 test('fresh read connections recover network failures and transient statuses with a strict bound', async () => {
   let calls = 0;

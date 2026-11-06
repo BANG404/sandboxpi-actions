@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { discover } from './watch.mjs';
+import {
+  promotionFixture,
+  promotionRejections,
+  rejectedPromotionPairs,
+} from './promotion-fixtures.mjs';
 
 const base = 'a'.repeat(40),
   sha = 'b'.repeat(40),
@@ -11,6 +16,78 @@ const env = {
   GITHUB_REF: 'refs/heads/main',
   GITHUB_TOKEN: 'private-dispatch-token',
 };
+
+function promotionWatch(f) {
+  const writes = [];
+  const dispatches = [];
+  return {
+    writes,
+    dispatches,
+    source: async (path, method = 'GET', body) => {
+      if (method !== 'GET') {
+        writes.push({ path, method, body });
+        return { id: 100, app: { id: 5497722 } };
+      }
+      if (path.startsWith('/pulls?')) return [f.values.pull];
+      if (path.startsWith('/commits/')) return { check_runs: [] };
+      return f.api(path);
+    },
+    request: async (_url, init) => {
+      dispatches.push(JSON.parse(init.body));
+      return { status: 204 };
+    },
+  };
+}
+
+test('watch inherits all three protected bot promotions from validateRequest', async () => {
+  for (const [source, target] of [
+    ['alpha', 'beta'],
+    ['beta', 'rc'],
+    ['rc', 'main'],
+  ]) {
+    const f = promotionFixture(source, target);
+    const watch = promotionWatch(f);
+    assert.equal(await discover(env, watch.source, watch.request), 1);
+    assert.equal(watch.dispatches[0].inputs.source_branch, target);
+    assert.equal(watch.dispatches[0].inputs.source_sha, f.input.sha);
+    assert.equal(watch.writes[0].body.status, 'queued');
+    assert.ok(!f.calls.some((path) => path.startsWith('collaborators/')));
+  }
+});
+
+test('watch refuses every invalid bot promotion before writes or dispatch', async (t) => {
+  for (const [source, target] of rejectedPromotionPairs) {
+    const f = promotionFixture(source, target);
+    const watch = promotionWatch(f);
+    assert.equal(await discover(env, watch.source, watch.request), 0);
+    assert.deepEqual(watch.writes, []);
+    assert.deepEqual(watch.dispatches, []);
+  }
+  for (const [name, change] of promotionRejections)
+    await t.test(name, async () => {
+      const f = promotionFixture();
+      change(f.values);
+      const watch = promotionWatch(f);
+      assert.equal(await discover(env, watch.source, watch.request), 0);
+      assert.deepEqual(watch.writes, []);
+      assert.deepEqual(watch.dispatches, []);
+    });
+  const f = promotionFixture();
+  const watch = promotionWatch(f);
+  assert.equal(
+    await discover(
+      env,
+      async (path, ...args) => {
+        if (path === '/branches/alpha') throw new Error('API unavailable');
+        return watch.source(path, ...args);
+      },
+      watch.request,
+    ),
+    0,
+  );
+  assert.deepEqual(watch.writes, []);
+  assert.deepEqual(watch.dispatches, []);
+});
 function fixture({ checks = [], permission = 'write', recent = false } = {}) {
   const pr = {
     number: 45,

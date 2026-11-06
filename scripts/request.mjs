@@ -119,9 +119,27 @@ export async function validateRequest(input, api) {
   assert.equal(pr.head?.sha, input.sha);
   assert.equal(pr.mergeable, true);
   assert.match(pr.merge_commit_sha || '', shaPattern);
-  assert.match(pr.user?.login || '', /^[a-z0-9][a-z0-9-]{0,38}$/iu);
-  const permission = await api(`/collaborators/${pr.user.login}/permission`);
-  assert.ok(['admin', 'maintain', 'write'].includes(permission.permission));
+  // Bot trust is bound to GitHub's immutable account and current protected refs.
+  if (
+    pr.user?.login === 'github-actions[bot]' &&
+    pr.user.id === 41898282 &&
+    pr.user.type === 'Bot'
+  ) {
+    assert.equal(branch.protected, true);
+    assert.equal(
+      pr.head.ref,
+      { beta: 'alpha', rc: 'beta', main: 'rc' }[input.branch],
+    );
+    assert.ok(['alpha', 'beta', 'rc'].includes(pr.head.ref));
+    const source = await api(`/branches/${pr.head.ref}`);
+    assert.equal(source.protected, true);
+    assert.equal(source.commit?.sha, input.sha);
+  } else {
+    assert.notEqual(pr.user?.type, 'Bot');
+    assert.match(pr.user?.login || '', /^[a-z0-9][a-z0-9-]{0,38}$/iu);
+    const permission = await api(`/collaborators/${pr.user.login}/permission`);
+    assert.ok(['admin', 'maintain', 'write'].includes(permission.permission));
+  }
   const ref = `refs/pull/${input.pr}/merge`;
   const merge = await api(`/git/ref/pull/${input.pr}/merge`);
   assert.equal(merge.object?.sha, pr.merge_commit_sha);
