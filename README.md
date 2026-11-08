@@ -26,7 +26,8 @@ merge candidate, permissions or PR state invalidates PR success. Channel CI
 continues to accept an exact immutable ancestor after its channel advances. Private source
 workflow files are never executed as Actions workflows.
 
-The `runner` job runs frozen install and the complete `bun run verify`. In
+The `runner` job runs frozen install and the complete `bun run verify`, including
+its bounded workflow/application lanes and ordered final build/bootstrap. In
 parallel, a fail-fast-disabled matrix runs all seven substantive existing gates:
 boundary, coverage, api, integration, security, mutation and risk. Boundary also
 runs gate-runner and release-workflow regressions. Integration uses disposable
@@ -62,8 +63,13 @@ The App creates **Public quality checks**, plus **Public PR test gates** when
 requested, on the exact source/PR head. External IDs are
 `sandboxpi:<request_id>:quality` and `sandboxpi:<request_id>:gates`.
 Image actions additionally retain **Public CD validate/publish**. Finalization
-runs with `always()`, uses actual job results, and rejects failed, cancelled,
-skipped or missing required jobs. Dispatch acknowledgment never proves quality.
+uses independent `quality_result` and `gates_result` jobs with `always()`, each
+revalidating current source immediately before its own callback and requiring all
+of its actual jobs to succeed. Neither waits for the other. Failed, cancelled,
+skipped or missing required jobs fail closed. Image operations wait for both
+required callbacks as well as the underlying jobs. The final receipt reads the
+authenticated terminal callbacks and never rewrites source checks after auto-merge;
+image finalization still revalidates source. Dispatch acknowledgment never proves quality.
 An unavailable callback API leaves required evidence incomplete, never green.
 Root must verify actual callbacks and privacy before migrating private rules.
 
@@ -77,7 +83,8 @@ Every project export requires authenticated `privacy-seed` inspection and
 anonymous GHCR token denial (401/403); source execution is blocked if the initial
 privacy check fails. Cache-restore failure preserves the existing remote cache.
 The storage initializer and existing `sandboxpi-build-cache` seed remain intact.
-Reports retain full command logs, build identity, coverage/LCOV, mutation,
+Quality reports include `.data/verify/` step logs and `timings.json`; they never
+enter public logs or Actions storage. Reports retain full command logs, build identity, coverage/LCOV, mutation,
 SAST/SCA and DAST/performance output, including after failed commands.
 
 `Read private report` accepts legacy RUN-ATTEMPT and the new phase-suffixed keys,

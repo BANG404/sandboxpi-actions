@@ -39,10 +39,40 @@ test('standard hosted jobs parallelize complete quality and seven real gates wit
     'prepare',
     'runner',
     'gate',
+    'quality_result',
+    'gates_result',
     'image',
   ]);
   assert.match(workflow.jobs.image.if, /needs\.runner\.result == 'success'/u);
   assert.match(workflow.jobs.image.if, /needs\.gate\.result == 'success'/u);
+});
+test('each callback waits only for its workload and images require both applicable callbacks', () => {
+  for (const [phase, workload] of [
+    ['quality', 'runner'],
+    ['gates', 'gate'],
+  ]) {
+    const job = workflow.jobs[`${phase}_result`];
+    assert.deepEqual(job.needs, ['prepare', workload]);
+    assert.match(job.if, /always\(\)/u);
+    assert.match(job.if, /needs\.prepare\.outputs\.snapshot != ''/u);
+    assert.equal(job.steps.at(-1).run, `node scripts/status.mjs ${phase}`);
+    assert.equal(job.steps.at(-1).env.JOB_NEEDS, '${{ toJSON(needs) }}');
+    assert.ok(
+      job.steps.some((step) => step.with?.['permission-checks'] === 'write'),
+    );
+  }
+  assert.match(workflow.jobs.gates_result.if, /run_gates == 'true'/u);
+  for (const name of ['quality_result', 'gates_result']) {
+    assert.ok(workflow.jobs.image.needs.includes(name));
+    assert.ok(workflow.jobs.finalize.needs.includes(name));
+    assert.ok(
+      workflow.jobs.image.if.includes(`needs.${name}.result == 'success'`),
+    );
+  }
+  assert.equal(
+    workflow.jobs.finalize.steps.at(-1).run,
+    'node scripts/status.mjs finish',
+  );
 });
 test('only post-quality image receives release credentials, source checkout jobs have contents-read only', () => {
   for (const [name, job] of Object.entries(workflow.jobs))
@@ -54,7 +84,16 @@ test('only post-quality image receives release credentials, source checkout jobs
           step.id === 'release' ? 'write' : 'read',
         );
         if (step.with['permission-checks'])
-          assert.ok(['prepare', 'finalize', 'runner', 'gate'].includes(name));
+          assert.ok(
+            [
+              'prepare',
+              'finalize',
+              'runner',
+              'gate',
+              'quality_result',
+              'gates_result',
+            ].includes(name),
+          );
         if (step.id === 'release') assert.equal(name, 'image');
       }
       for (const key of [

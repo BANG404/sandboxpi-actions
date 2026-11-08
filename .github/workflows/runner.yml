@@ -169,11 +169,75 @@ jobs:
           SOURCE_TOKEN: ${{ steps.source.outputs.token }}
           GHCR_TOKEN: ${{ github.token }}
         run: node scripts/runtime.mjs
+  quality_result:
+    environment: release
+    if: always() && needs.prepare.outputs.snapshot != ''
+    needs: [prepare, runner]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        id: source
+        with:
+          app-id: ${{ vars.CI_APP_ID }}
+          private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
+          owner: BANG404
+          repositories: sandboxpi
+          permission-contents: read
+          permission-pull-requests: read
+          permission-checks: write
+      - name: Revalidate source and report quality immediately
+        if: always() && steps.source.outcome == 'success'
+        env:
+          SOURCE_TOKEN: ${{ steps.source.outputs.token }}
+          SOURCE_SNAPSHOT: ${{ needs.prepare.outputs.snapshot }}
+          QUALITY_ID: ${{ needs.prepare.outputs.quality_id }}
+          JOB_NEEDS: ${{ toJSON(needs) }}
+        run: node scripts/status.mjs quality
+  gates_result:
+    environment: release
+    if: always() && needs.prepare.outputs.snapshot != '' && needs.prepare.outputs.run_gates == 'true'
+    needs: [prepare, gate]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        id: source
+        with:
+          app-id: ${{ vars.CI_APP_ID }}
+          private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
+          owner: BANG404
+          repositories: sandboxpi
+          permission-contents: read
+          permission-pull-requests: read
+          permission-checks: write
+      - name: Revalidate source and report all seven gates immediately
+        if: always() && steps.source.outcome == 'success'
+        env:
+          SOURCE_TOKEN: ${{ steps.source.outputs.token }}
+          SOURCE_SNAPSHOT: ${{ needs.prepare.outputs.snapshot }}
+          GATES_ID: ${{ needs.prepare.outputs.gates_id }}
+          JOB_NEEDS: ${{ toJSON(needs) }}
+        run: node scripts/status.mjs gates
   image:
-    needs: [prepare, runner, gate]
+    needs: [prepare, runner, gate, quality_result, gates_result]
     if: >-
       always() && needs.prepare.result == 'success' && needs.runner.result == 'success' &&
-      (needs.prepare.outputs.run_gates != 'true' || needs.gate.result == 'success') &&
+      needs.quality_result.result == 'success' &&
+      (needs.prepare.outputs.run_gates != 'true' ||
+        (needs.gate.result == 'success' && needs.gates_result.result == 'success')) &&
       (inputs.action == 'validate' || inputs.action == 'publish')
     runs-on: ubuntu-24.04
     timeout-minutes: 100
@@ -236,7 +300,7 @@ jobs:
   finalize:
     environment: release
     if: always() && needs.prepare.outputs.snapshot != ''
-    needs: [prepare, runner, gate, image]
+    needs: [prepare, runner, gate, quality_result, gates_result, image]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -256,7 +320,7 @@ jobs:
           permission-contents: read
           permission-pull-requests: read
           permission-checks: write
-      - name: Revalidate exact head and base and finalize actual results
+      - name: Finalize image and discovery receipt without rewriting source checks
         if: always() && steps.source.outcome == 'success'
         env:
           SOURCE_TOKEN: ${{ steps.source.outputs.token }}
