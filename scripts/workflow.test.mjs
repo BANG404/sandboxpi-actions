@@ -54,7 +54,7 @@ test('only post-quality image receives release credentials, source checkout jobs
           step.id === 'release' ? 'write' : 'read',
         );
         if (step.with['permission-checks'])
-          assert.ok(['prepare', 'finalize'].includes(name));
+          assert.ok(['prepare', 'finalize', 'runner', 'gate'].includes(name));
         if (step.id === 'release') assert.equal(name, 'image');
       }
       for (const key of [

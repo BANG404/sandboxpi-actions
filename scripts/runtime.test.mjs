@@ -112,6 +112,7 @@ test('full verify and all seven substantive gate commands are fixed, including r
   assert.deepEqual(phaseCommands('quality'), [
     ['dependencies', 'bun', ['install', '--frozen-lockfile']],
     ['quality', 'bun', ['run', 'verify']],
+    ['security', 'node', ['scripts/test-gate.mjs', 'security']],
   ]);
   const refs = new Set();
   for (const phase of [
@@ -206,7 +207,8 @@ test('actual outer runtime captures malicious source output and blocks every exp
     const script = `import {runPhase} from ${JSON.stringify(runtime)};const statuses=${JSON.stringify(scenario.statuses)};let privacyIndex=0,branchReads=0;globalThis.fetch=async url=>{if(url.includes('ghcr.io/token'))return new Response('',{status:statuses[Math.min(privacyIndex++,statuses.length-1)]});if(url.includes('/branches/')){if(++branchReads>1&&${!!scenario.validationFailure})throw new Error('PRIVATE_VALIDATION_FAILURE');return Response.json({commit:{sha:${JSON.stringify(snapshot.base)}}});}if(url.includes('/compare/'))return Response.json({status:'ahead',merge_base_commit:{sha:${JSON.stringify(snapshot.sha)}}});throw new Error('Unexpected API');};const env=JSON.parse(process.env.FIXTURE_ENV);try{await runPhase(env)}catch{console.log('Generic failure');process.exitCode=1}`;
     const childEnvironment = {
       ...env,
-      SOURCE_SNAPSHOT: JSON.stringify(snapshot),
+      SOURCE_SNAPSHOT: JSON.stringify({ ...snapshot, runGates: true }),
+      RUN_GATES: 'true',
       PUBLIC_PHASE: 'quality',
       PATH: `${bin}${delimiter}${process.env.PATH}`,
       GITHUB_OUTPUT: commandFile,

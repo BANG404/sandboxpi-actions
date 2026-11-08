@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { publishSecurity, securityApi } from './security-summary.mjs';
 import { spawnSync } from 'node:child_process';
 import {
   closeSync,
@@ -94,7 +95,11 @@ export function phaseCommands(phase) {
     ),
   );
   const commands = [['dependencies', 'bun', ['install', '--frozen-lockfile']]];
-  if (phase === 'quality') commands.push(['quality', 'bun', ['run', 'verify']]);
+  if (phase === 'quality')
+    commands.push(
+      ['quality', 'bun', ['run', 'verify']],
+      ['security', 'node', ['scripts/test-gate.mjs', 'security']],
+    );
   else if (phase === 'image')
     commands.push(
       [
@@ -134,6 +139,8 @@ export function phaseCachePaths(phase) {
     '.data/bun-cache',
     '.data/go-mod',
     '.data/go-build',
+    '.data/security-tools',
+    '.data/trivy',
     ...(phase === 'gate-integration'
       ? ['.data/test-gates/go', '.data/test-gates/go-build']
       : []),
@@ -146,7 +153,7 @@ export function phaseReportPaths(phase) {
     ...(phase.startsWith('gate-')
       ? [`.data/test-gates/${phase.slice(5)}`]
       : []),
-    ...(phase === 'quality' ? ['coverage'] : []),
+    ...(phase === 'quality' ? ['coverage', '.data/test-gates/security'] : []),
     ...(phase === 'image' ? ['.data/cd/trivy.json'] : []),
   ];
 }
@@ -314,6 +321,7 @@ export async function runPhase(environment) {
       childEnv.AGS_CHANNEL = environment.AGS_CHANNEL || 'production';
     }
     for (const [stage, program, args] of commands) {
+      if (stage === 'security' && snapshot.runGates) continue;
       console.log(`Phase ${phase}: ${stage}`);
       const env = { ...childEnv };
       if (stage === 'image')
@@ -381,6 +389,22 @@ export async function runPhase(environment) {
       console.log(`Private report: ${keys.report}`);
     } catch {
       failure = true;
+    }
+    if (
+      existsSync(join(root, 'scripts/security-open-source.mjs')) &&
+      (phase === 'gate-security' || (phase === 'quality' && !snapshot.runGates))
+    ) {
+      try {
+        const summary = await publishSecurity(
+          root,
+          snapshot,
+          !failure,
+          securityApi(environment.SOURCE_TOKEN),
+        );
+        assert.ok(summary.success, 'Incomplete or failed security evidence');
+      } catch {
+        failure = true;
+      }
     }
     closeSync(descriptor);
     rmSync(temporary, { recursive: true, force: true });
