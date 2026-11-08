@@ -99,6 +99,15 @@ pass gates; finalization completes them from actual results. Recent PRs leave
 two minutes for on-demand host or enabled private dispatchers. PR cache keys are isolated
 from protected-channel cache exports.
 
+## Executor policy review
+
+The `.github/CODEOWNERS` file assigns every executor file to BANG404. Protect
+`main` with required PRs, Code Owner review, stale-approval dismissal, resolved
+threads, merge commits, no deletion/force pushes and no bypass actors. Keep the
+`release` environment restricted to `main`. Ownership applies only after the
+file exists on the PR target; the initial ownership PR bootstraps that policy.
+A PR author cannot approve their own PR. Never bypass review for executor updates.
+
 ## Private security summaries
 
 Ordinary quality requests without a full matrix also execute the security gate.
