@@ -97,3 +97,18 @@ current-base evidence before submitting once per input. Queued markers never
 pass gates; finalization completes them from actual results. Recent PRs leave
 two minutes for on-demand host or enabled private dispatchers. PR cache keys are isolated
 from protected-channel cache exports.
+
+## Private security summaries
+
+Ordinary quality requests without a full matrix also execute the security gate.
+Full matrices reuse their independent gate-security job. After private report
+export, the trusted runtime publishes a bounded `Security scan summary` Check
+through App 5497722 to the private source repository. Only fixed scanner IDs,
+completion states and numeric severity counts are published; no source paths,
+matched secrets or raw diagnostics enter public output. Source processes never
+receive the check-write credential. Missing enhanced reports fail new source
+phases; older revisions without the scanner entrypoint retain legacy gates and
+have no enhanced summary. Existing required quality and test callbacks remain
+authoritative. The private operator collector validates exact source evidence
+before feeding the Grafana security dashboard. Monitoring failure never grants
+merge permission.
