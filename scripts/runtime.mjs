@@ -153,7 +153,9 @@ export function phaseReportPaths(phase) {
     ...(phase.startsWith('gate-')
       ? [`.data/test-gates/${phase.slice(5)}`]
       : []),
-    ...(phase === 'quality' ? ['coverage', '.data/test-gates/security'] : []),
+    ...(phase === 'quality'
+      ? ['coverage', '.data/test-gates/security', '.data/verify']
+      : []),
     ...(phase === 'image' ? ['.data/cd/trivy.json'] : []),
   ];
 }
