@@ -68,7 +68,8 @@ An unavailable callback API leaves required evidence incomplete, never green.
 Root must verify actual callbacks and privacy before migrating private rules.
 
 Project data never enters public Actions artifacts, caches or summaries. Private
-GHCR `sandboxpi-ci-data` stores independent `deps-PHASE-v2` caches and
+GHCR `sandboxpi-ci-data` stores independent `deps-PHASE-v3` quality/gate caches
+(image retains v2) and
 `report-RUN-ATTEMPT-PHASE` reports. PHASE is quality, image or gate-NAME.
 Image Buildx uses local mode=max runtime/AGS caches inside its private phase
 bundle, so package-write credentials stay outside the source environment.

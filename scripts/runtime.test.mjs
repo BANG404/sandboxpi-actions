@@ -258,6 +258,12 @@ test('PR cache exports cannot overwrite protected-channel cache keys', () => {
   );
 });
 
+test('expanded security caches use a new generation without restoring incompatible archives', () => {
+  assert.match(storageKeys(env, 'quality').cache, /quality-v3$/u);
+  assert.match(storageKeys(env, 'gate-security').cache, /gate-security-v3$/u);
+  assert.match(storageKeys(env, 'image').cache, /image-v2$/u);
+  assert.ok(phaseCachePaths('gate-security').includes('.data/security-tools'));
+});
 test('integration module caches stay private caches and never inflate diagnostic reports', () => {
   assert.ok(
     phaseCachePaths('gate-integration').includes('.data/test-gates/go'),

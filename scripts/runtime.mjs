@@ -128,7 +128,7 @@ export function storageKeys(environment, phase) {
   assert.match(environment.GITHUB_RUN_ID || '', /^[1-9]\d*$/u);
   assert.match(environment.GITHUB_RUN_ATTEMPT || '', /^[1-9]\d*$/u);
   return {
-    cache: `${dataPackage}:deps-${environment.PUBLIC_ACTION === 'pr' || environment.SOURCE_PR ? 'pr-' : ''}${phase}-v2`,
+    cache: `${dataPackage}:deps-${environment.PUBLIC_ACTION === 'pr' || environment.SOURCE_PR ? 'pr-' : ''}${phase}-${phase === 'image' ? 'v2' : 'v3'}`,
     report: `${dataPackage}:report-${environment.GITHUB_RUN_ID}-${environment.GITHUB_RUN_ATTEMPT}-${phase}`,
   };
 }
