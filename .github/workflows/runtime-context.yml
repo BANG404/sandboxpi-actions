@@ -1,0 +1,43 @@
+name: Read-only runtime context
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        type: string
+        required: true
+      request_id:
+        type: string
+        required: true
+permissions:
+  contents: read
+jobs:
+  describe:
+    if: github.repository == 'BANG404/sandboxpi-actions' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    environment: release
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        id: source
+        with:
+          app-id: ${{ vars.CI_APP_ID }}
+          private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
+          owner: BANG404
+          repositories: sandboxpi
+          permission-contents: read
+          permission-checks: write
+      - name: Describe only; publish hashes to the private source Check
+        env:
+          SOURCE_TOKEN: ${{ steps.source.outputs.token }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          REQUEST_ID: ${{ inputs.request_id }}
+          TENCENTCLOUD_SECRET_ID: ${{ secrets.TENCENTCLOUD_SECRET_ID }}
+          TENCENTCLOUD_SECRET_KEY: ${{ secrets.TENCENTCLOUD_SECRET_KEY }}
+          TENCENTCLOUD_SESSION_TOKEN: ${{ secrets.TENCENTCLOUD_SESSION_TOKEN }}
+        run: node scripts/runtime-context.mjs

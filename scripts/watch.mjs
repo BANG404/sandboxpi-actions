@@ -95,6 +95,7 @@ export async function discover(
               source_pr: input.pr,
               action: 'pr',
               run_gates: 'true',
+              full_scope: 'false',
               request_id: input.requestId,
               watch_check_id: String(marker.id),
             },

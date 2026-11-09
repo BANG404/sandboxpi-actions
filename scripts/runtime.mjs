@@ -36,6 +36,7 @@ export function sourceEnvironment(environment, snapshot, root, temporary) {
     TMPDIR: join(temporary, 'tmp'),
     RUNNER_TEMP: join(temporary, 'tmp'),
     CI: 'true',
+    VALIDATION_FULL: String(snapshot.fullScope ?? true),
     NO_COLOR: '1',
     FORCE_COLOR: '0',
     GITHUB_RUN_ID: environment.GITHUB_RUN_ID,
@@ -48,6 +49,7 @@ export function sourceEnvironment(environment, snapshot, root, temporary) {
     GITHUB_BASE_REF: snapshot.pr ? snapshot.branch : '',
     GITHUB_HEAD_REF: snapshot.pr ? 'trusted-pr' : '',
     BUN_INSTALL_CACHE_DIR: join(root, '.data/bun-cache'),
+    PLAYWRIGHT_BROWSERS_PATH: join(root, '.data/playwright'),
     GOMODCACHE: join(root, '.data/go-mod'),
     GOCACHE: join(root, '.data/go-build'),
     TRIVY_CACHE_DIR: join(root, '.data/trivy'),
@@ -128,7 +130,7 @@ export function storageKeys(environment, phase) {
   assert.match(environment.GITHUB_RUN_ID || '', /^[1-9]\d*$/u);
   assert.match(environment.GITHUB_RUN_ATTEMPT || '', /^[1-9]\d*$/u);
   return {
-    cache: `${dataPackage}:deps-${environment.PUBLIC_ACTION === 'pr' || environment.SOURCE_PR ? 'pr-' : ''}${phase}-${phase === 'image' ? 'v2' : 'v3'}`,
+    cache: `${dataPackage}:deps-${environment.PUBLIC_ACTION === 'pr' || environment.SOURCE_PR ? 'pr-' : ''}${phase}-${phase === 'image' ? 'v2' : phase === 'quality' ? 'v4' : 'v3'}`,
     report: `${dataPackage}:report-${environment.GITHUB_RUN_ID}-${environment.GITHUB_RUN_ATTEMPT}-${phase}`,
   };
 }
@@ -141,6 +143,7 @@ export function phaseCachePaths(phase) {
     '.data/go-build',
     '.data/security-tools',
     '.data/trivy',
+    ...(phase === 'quality' ? ['.data/playwright'] : []),
     ...(phase === 'gate-integration'
       ? ['.data/test-gates/go', '.data/test-gates/go-build']
       : []),

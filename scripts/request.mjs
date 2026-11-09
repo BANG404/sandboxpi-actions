@@ -26,7 +26,9 @@ export function normalize(environment) {
   assert.ok(action !== 'pr' || pr);
   assert.ok(!pr || ['ci', 'pr'].includes(action));
   assert.ok(['', 'true', 'false'].includes(environment.RUN_GATES || ''));
-  const runGates = action === 'pr' || environment.RUN_GATES === 'true';
+  assert.ok(['', 'true', 'false'].includes(environment.FULL_SCOPE || ''));
+  const runGates =
+    action === 'pr' || action === 'publish' || environment.RUN_GATES === 'true';
   const requestId =
     environment.REQUEST_ID ||
     `${environment.GITHUB_RUN_ID}-${environment.GITHUB_RUN_ATTEMPT}`;
@@ -48,6 +50,9 @@ export function normalize(environment) {
     pr,
     runGates,
     requestId,
+    ...(environment.FULL_SCOPE || action === 'publish'
+      ? { fullScope: action === 'publish' || environment.FULL_SCOPE === 'true' }
+      : {}),
   };
 }
 // Synchronous source commands can outlive pooled sockets. Close GET connections
