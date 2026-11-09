@@ -111,7 +111,10 @@ The `.github/CODEOWNERS` file assigns every executor file to BANG404. Protect
 threads, merge commits, no deletion/force pushes and no bypass actors. Keep the
 `release` environment restricted to `main`. Ownership applies only after the
 file exists on the PR target; the initial ownership PR bootstraps that policy.
-A PR author cannot approve their own PR. Never bypass review for executor updates.
+An author cannot submit an approving review of their own PR. Owner-authored PRs
+may still merge when live GitHub rules permit; inspect the effective review
+decision instead of inventing a second-account requirement. Preserve actual
+required reviews, protected PR delivery and all checks without bypass actors.
 
 ## Private security summaries
 
