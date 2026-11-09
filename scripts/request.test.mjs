@@ -475,3 +475,18 @@ test('callbacks use exact head, both names and protocol external IDs, and fail c
     'Public CD publish',
   );
 });
+
+test('publish always requests the complete gate matrix and full scope; optional scope defaults preserve older callers', () => {
+  const input = { ...environment, PUBLIC_ACTION: 'ci', SOURCE_PR: undefined };
+  assert.equal(normalize(input).fullScope, undefined);
+  assert.equal(normalize({ ...input, FULL_SCOPE: 'false' }).fullScope, false);
+  const publish = normalize({
+    ...input,
+    PUBLIC_ACTION: 'publish',
+    RUN_GATES: 'false',
+    FULL_SCOPE: 'false',
+    AGS_CHANNEL: 'alpha',
+  });
+  assert.equal(publish.runGates, true);
+  assert.equal(publish.fullScope, true);
+});

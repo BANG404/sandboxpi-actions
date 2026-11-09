@@ -8,7 +8,9 @@ public Ubuntu 24.04 hosted jobs; no service deployment occurs here.
 `runner.yml` is main-only and accepts `ci`, `pr`, `validate`, and `publish`.
 `source_sha` is an exact lowercase 40-character commit SHA; `source_branch` is
 alpha/beta/rc/main (default main). `source_pr` is optional for `ci` and required
-for `pr`. `run_gates` defaults false; `pr` always enables every gate. Optional
+for `pr`. `run_gates` defaults false; `pr` and `publish` always enable the matrix.
+`full_scope` defaults true; false permits conservative source change selection.
+Publication always uses full scope. Optional
 `request_id` is a UUID; legacy calls correlate by public run ID and attempt.
 Existing two-input main CI and matching source_branch/channel image calls work.
 Image channels remain alpha -> alpha, beta -> beta, rc -> rc, main -> production.
@@ -31,7 +33,10 @@ parallel, a fail-fast-disabled matrix runs all seven substantive existing gates:
 boundary, coverage, api, integration, security, mutation and risk. Boundary also
 runs gate-runner and release-workflow regressions. Integration uses disposable
 local Docker fixtures; security retains locked SCA, offline SAST and its positive
-controls; mutation and isolated performance/DAST run on every requested matrix.
+controls; mutation and isolated performance/DAST execute for affected runtime/sandbox/
+verification inputs and on full/nightly/publication requests. Unrelated changes
+produce explicit applicability reports without fabricated scores. UI/runtime
+quality also exercises real desktop/narrow browser fixtures.
 No source job runs on a persistent trusted host or receives service credentials.
 
 The trusted `scripts/runtime.mjs` owns checkout, stdout/stderr capture, storage
@@ -68,8 +73,8 @@ An unavailable callback API leaves required evidence incomplete, never green.
 Root must verify actual callbacks and privacy before migrating private rules.
 
 Project data never enters public Actions artifacts, caches or summaries. Private
-GHCR `sandboxpi-ci-data` stores independent `deps-PHASE-v3` quality/gate caches
-(image retains v2) and
+GHCR `sandboxpi-ci-data` stores `deps-quality-v4` including private Chromium
+binaries, `deps-gate-NAME-v3` gate caches (image retains v2) and
 `report-RUN-ATTEMPT-PHASE` reports. PHASE is quality, image or gate-NAME.
 Image Buildx uses local mode=max runtime/AGS caches inside its private phase
 bundle, so package-write credentials stay outside the source environment.
@@ -106,7 +111,10 @@ The `.github/CODEOWNERS` file assigns every executor file to BANG404. Protect
 threads, merge commits, no deletion/force pushes and no bypass actors. Keep the
 `release` environment restricted to `main`. Ownership applies only after the
 file exists on the PR target; the initial ownership PR bootstraps that policy.
-A PR author cannot approve their own PR. Never bypass review for executor updates.
+An author cannot submit an approving review of their own PR. Owner-authored PRs
+may still merge when live GitHub rules permit; inspect the effective review
+decision instead of inventing a second-account requirement. Preserve actual
+required reviews, protected PR delivery and all checks without bypass actors.
 
 ## Private security summaries
 
@@ -122,3 +130,15 @@ have no enhanced summary. Existing required quality and test callbacks remain
 authoritative. The private operator collector validates exact source evidence
 before feeding the Grafana security dashboard. Monitoring failure never grants
 merge permission.
+
+## Read-only runtime context
+
+Protected main-only `runtime-context.yml` authenticates an ancestral alpha source
+and executes fixed Tencent `DescribeSandboxToolList` using existing protected
+release CAM secrets. It cannot create or update a tool and never executes private
+source with CAM credentials. Only immutable image/tool/configuration hashes,
+check time and field names enter a correlated App 5497722 Check in the private
+source repository. No raw tool configuration or credential enters public output.
+The private alpha operator uses those live hashes in independent Embed/lifecycle/
+media/load fingerprints; missing context requires full execution and cannot seed
+reusable receipts. Publish this reviewed workflow through protected-main review.

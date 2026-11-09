@@ -25,6 +25,10 @@ on:
         description: Run every substantive matrix gate (always true for pr)
         type: boolean
         default: false
+      full_scope:
+        description: Force all optional mutation, risk and browser scopes (nightly or explicit full validation)
+        type: boolean
+        default: true
       request_id:
         description: Optional UUID correlation identifier
         type: string
@@ -49,6 +53,7 @@ env:
   SOURCE_PR: ${{ inputs.source_pr }}
   PUBLIC_ACTION: ${{ inputs.action }}
   RUN_GATES: ${{ inputs.run_gates }}
+  FULL_SCOPE: ${{ inputs.full_scope }}
   REQUEST_ID: ${{ inputs.request_id }}
   WATCH_CHECK_ID: ${{ inputs.watch_check_id }}
   AGS_CHANNEL: ${{ inputs.channel }}
