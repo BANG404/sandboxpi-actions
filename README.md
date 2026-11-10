@@ -28,7 +28,8 @@ merge candidate, permissions or PR state invalidates PR success. Channel CI
 continues to accept an exact immutable ancestor after its channel advances. Private source
 workflow files are never executed as Actions workflows.
 
-The `runner` job runs frozen install and the complete `bun run verify`. In
+The `runner` job runs frozen install and the complete `bun run verify`, including
+its bounded workflow/application lanes and ordered final build/bootstrap. In
 parallel, a fail-fast-disabled matrix runs all seven substantive existing gates:
 boundary, coverage, api, integration, security, mutation and risk. Boundary also
 runs gate-runner and release-workflow regressions. Integration uses disposable
@@ -58,8 +59,8 @@ Keep `CI_APP_ID=5497722` and `CI_APP_PRIVATE_KEY` in the existing protected
 `release` environment. Source-only jobs reference only this App key to mint
 sandboxpi-only contents-read/PR-read tokens (checks-write only for callbacks).
 Unused environment secrets do not enter source processes. Only the post-quality
-image job references a contents-write release token, SKILL_SOURCES_TOKEN,
-ACR/Woodpecker settings and publish-only CAM secrets.
+image job references release credentials with contents write permission. It also
+uses `SKILL_SOURCES_TOKEN`, ACR/Woodpecker settings and publish-only CAM secrets.
 Keep these credentials outside Git. Image publication/activation retains the
 private source's runtime, zero-finding Trivy, ACR and Tencent transfer contracts.
 
@@ -67,14 +68,19 @@ The App creates **Public quality checks**, plus **Public PR test gates** when
 requested, on the exact source/PR head. External IDs are
 `sandboxpi:<request_id>:quality` and `sandboxpi:<request_id>:gates`.
 Image actions additionally retain **Public CD validate/publish**. Finalization
-runs with `always()`, uses actual job results, and rejects failed, cancelled,
-skipped or missing required jobs. Dispatch acknowledgment never proves quality.
+uses independent `quality_result` and `gates_result` jobs with `always()`, each
+revalidating current source immediately before its own callback and requiring all
+of its actual jobs to succeed. Neither waits for the other. Failed, cancelled,
+skipped or missing required jobs fail closed. Image operations wait for both
+required callbacks as well as the underlying jobs. The final receipt reads the
+authenticated terminal callbacks and never rewrites source checks after auto-merge;
+image finalization still revalidates source. Dispatch acknowledgment never proves quality.
 An unavailable callback API leaves required evidence incomplete, never green.
 Root must verify actual callbacks and privacy before migrating private rules.
 
 Project data never enters public Actions artifacts, caches or summaries. Private
-GHCR `sandboxpi-ci-data` stores `deps-quality-v4` including private Chromium
-binaries, `deps-gate-NAME-v3` gate caches (image retains v2) and
+GHCR `sandboxpi-ci-data` stores `deps-quality-v5` including private Chromium
+binaries, `deps-gate-NAME-v4` gate caches (image retains v2) and
 `report-RUN-ATTEMPT-PHASE` reports. PHASE is quality, image or gate-NAME.
 Image Buildx uses local mode=max runtime/AGS caches inside its private phase
 bundle, so package-write credentials stay outside the source environment.
@@ -82,7 +88,8 @@ Every project export requires authenticated `privacy-seed` inspection and
 anonymous GHCR token denial (401/403); source execution is blocked if the initial
 privacy check fails. Cache-restore failure preserves the existing remote cache.
 The storage initializer and existing `sandboxpi-build-cache` seed remain intact.
-Reports retain full command logs, build identity, coverage/LCOV, mutation,
+Quality reports include `.data/verify/` step logs and `timings.json`; they never
+enter public logs or Actions storage. Reports retain full command logs, build identity, coverage/LCOV, mutation,
 SAST/SCA and DAST/performance output, including after failed commands.
 
 `Read private report` accepts legacy RUN-ATTEMPT and the new phase-suffixed keys,
@@ -142,3 +149,15 @@ source repository. No raw tool configuration or credential enters public output.
 The private alpha operator uses those live hashes in independent Embed/lifecycle/
 media/load fingerprints; missing context requires full execution and cannot seed
 reusable receipts. Publish this reviewed workflow through protected-main review.
+
+Module impact plans and changed-source coverage follow the private repository
+`deploy/github/module-validation.md` contract. Quality reports include
+`.data/validation` and per-gate private reports include their exact selection;
+never expose these files through public Actions artifacts or caches.
+
+The trusted outer bootstrap authenticates per-unit cache manifests with the
+private source App check `Public validation unit evidence`; required aggregate
+checks retain their authority. Restore only exact protected-executor/phase/source
+proof with complete newer-attempt history. Quality/gate caches use v5/v4 and
+include owner-only `.data/validation/evidence`; image caches remain v2. Successful
+unit observations can survive a failed overall run without refreshed timestamps.

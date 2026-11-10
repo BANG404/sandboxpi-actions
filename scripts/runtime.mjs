@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
 import { publishSecurity, securityApi } from './security-summary.mjs';
+import {
+  authenticateEvidence,
+  attestEvidence,
+} from './validation-evidence.mjs';
 import { spawnSync } from 'node:child_process';
 import {
   closeSync,
@@ -37,6 +41,10 @@ export function sourceEnvironment(environment, snapshot, root, temporary) {
     RUNNER_TEMP: join(temporary, 'tmp'),
     CI: 'true',
     VALIDATION_FULL: String(snapshot.fullScope ?? true),
+    VALIDATION_EVIDENCE_TRUSTED: 'false',
+    VALIDATION_EXECUTOR_REVISION: environment.GITHUB_SHA || '',
+    VALIDATION_SOURCE_REVISION: snapshot.sha,
+    VALIDATION_TEMPORARY_ROOT: temporary,
     NO_COLOR: '1',
     FORCE_COLOR: '0',
     GITHUB_RUN_ID: environment.GITHUB_RUN_ID,
@@ -130,7 +138,7 @@ export function storageKeys(environment, phase) {
   assert.match(environment.GITHUB_RUN_ID || '', /^[1-9]\d*$/u);
   assert.match(environment.GITHUB_RUN_ATTEMPT || '', /^[1-9]\d*$/u);
   return {
-    cache: `${dataPackage}:deps-${environment.PUBLIC_ACTION === 'pr' || environment.SOURCE_PR ? 'pr-' : ''}${phase}-${phase === 'image' ? 'v2' : phase === 'quality' ? 'v4' : 'v3'}`,
+    cache: `${dataPackage}:deps-${environment.PUBLIC_ACTION === 'pr' || environment.SOURCE_PR ? 'pr-' : ''}${phase}-${phase === 'image' ? 'v2' : phase === 'quality' ? 'v5' : 'v4'}`,
     report: `${dataPackage}:report-${environment.GITHUB_RUN_ID}-${environment.GITHUB_RUN_ATTEMPT}-${phase}`,
   };
 }
@@ -143,6 +151,7 @@ export function phaseCachePaths(phase) {
     '.data/go-build',
     '.data/security-tools',
     '.data/trivy',
+    '.data/validation/evidence',
     ...(phase === 'quality' ? ['.data/playwright'] : []),
     ...(phase === 'gate-integration'
       ? ['.data/test-gates/go', '.data/test-gates/go-build']
@@ -156,7 +165,14 @@ export function phaseReportPaths(phase) {
     ...(phase.startsWith('gate-')
       ? [`.data/test-gates/${phase.slice(5)}`]
       : []),
-    ...(phase === 'quality' ? ['coverage', '.data/test-gates/security'] : []),
+    ...(phase === 'quality'
+      ? [
+          'coverage',
+          '.data/test-gates/security',
+          '.data/verify',
+          '.data/validation',
+        ]
+      : []),
     ...(phase === 'image' ? ['.data/cd/trivy.json'] : []),
   ];
 }
@@ -196,6 +212,8 @@ export async function runPhase(environment) {
     cacheReady = false,
     failure = false;
   const cachePaths = phaseCachePaths(phase);
+  const evidenceDirectory = join(root, '.data/validation/evidence');
+  let unitEvidence = false;
   const bundle = (reference, paths, base) => {
     const context = mkdtempSync(join(temporary, 'bundle-'));
     try {
@@ -303,6 +321,50 @@ export async function runPhase(environment) {
       }
     }
     cacheReady = true;
+    unitEvidence =
+      phase !== 'image' &&
+      existsSync(join(root, 'scripts/validation-ledger.mjs'));
+    if (unitEvidence) {
+      const api = github(environment.SOURCE_TOKEN);
+      const localGit = (args) => {
+        const result = spawnSync('git', args, {
+          cwd: root,
+          env: childEnv,
+          encoding: 'utf8',
+          timeout: 20000,
+          maxBuffer: 4 * 1024 * 1024,
+        });
+        assert.ok(
+          !result.error && result.status === 0,
+          'Cannot authenticate validation ancestry',
+        );
+        return result.stdout;
+      };
+      const valid = await authenticateEvidence(evidenceDirectory, {
+        api,
+        environment,
+        snapshot,
+        phase,
+        ancestors: (base, head) => {
+          localGit(['merge-base', '--is-ancestor', base, head]);
+          return localGit(['rev-list', `${base}..${head}`])
+            .trim()
+            .split('\n')
+            .filter(Boolean);
+        },
+        checks: async (sha) => {
+          const result = await api(
+            `/commits/${sha}/check-runs?filter=all&per_page=100`,
+          );
+          assert.ok(
+            result.total_count <= result.check_runs.length,
+            'Incomplete validation history',
+          );
+          return result.check_runs;
+        },
+      });
+      childEnv.VALIDATION_EVIDENCE_TRUSTED = String(valid);
+    }
     if (phase === 'image') {
       // The source image driver can use a credential-free Buildx builder; registry auth remains outside source env.
       command(
@@ -358,6 +420,13 @@ export async function runPhase(environment) {
         await verifyPrivateStorage(['sandboxpi-ci-data'], (ref) =>
           command('docker', ['manifest', 'inspect', ref]),
         );
+        if (unitEvidence)
+          await attestEvidence(evidenceDirectory, {
+            api: github(environment.SOURCE_TOKEN),
+            environment,
+            snapshot,
+            phase,
+          });
         bundle(keys.cache, cachePaths, root);
       }
     } catch (error) {
