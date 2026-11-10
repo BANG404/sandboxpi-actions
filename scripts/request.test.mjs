@@ -422,6 +422,7 @@ test('callbacks use exact head, both names and protocol external IDs, and fail c
       const id = path.split('/').at(-1);
       if (method === 'PATCH') {
         patches.push(body);
+        Object.assign(checks[id], body);
         return {};
       }
       return checks[id];
@@ -451,29 +452,286 @@ test('callbacks use exact head, both names and protocol external IDs, and fail c
       prepare: { result: 'success' },
       runner: { result: 'success' },
       gate: { result: 'success' },
+      quality_result: { result: 'success' },
+      gates_result: { result: 'success' },
     }),
   };
+  await report(
+    'quality',
+    {
+      ...finalEnv,
+      GATES_ID: undefined,
+      JOB_NEEDS: JSON.stringify({
+        prepare: { result: 'success' },
+        runner: { result: 'success' },
+      }),
+    },
+    api,
+  );
+  assert.deepEqual(
+    patches.map((patch) => patch.name),
+    ['Public quality checks'],
+  );
+  assert.equal(checks[2].status, 'in_progress');
+  await report(
+    'gates',
+    {
+      ...finalEnv,
+      QUALITY_ID: undefined,
+      JOB_NEEDS: JSON.stringify({
+        prepare: { result: 'success' },
+        gate: { result: 'success' },
+      }),
+    },
+    api,
+  );
+  assert.equal(patches.length, 2);
   await report('finish', finalEnv, api);
+  assert.equal(
+    patches.length,
+    2,
+    'Finalization must not rewrite independent results',
+  );
   assert.ok(patches.every((patch) => patch.conclusion === 'success'));
   patches.length = 0;
+  // Auto-merge may close the PR before the discovery receipt; no late rewrite.
+  await report('finish', finalEnv, async (path, ...args) =>
+    path === '/pulls/27' ? { state: 'closed' } : api(path, ...args),
+  );
+  assert.equal(patches.length, 0);
   await assert.rejects(
-    report('finish', finalEnv, async (path, ...args) =>
+    report('quality', finalEnv, async (path, ...args) =>
       path === '/branches/alpha'
         ? { commit: { sha: merge } }
         : api(path, ...args),
     ),
   );
-  assert.equal(patches.length, 2);
+  assert.equal(patches.length, 1);
   assert.ok(patches.every((patch) => patch.conclusion === 'failure'));
   checks[1].app.id = 1;
   patches.length = 0;
-  await assert.rejects(report('finish', finalEnv, api));
+  await assert.rejects(report('quality', finalEnv, api));
+  assert.equal(patches.length, 0);
+  await report('gates', finalEnv, api);
   assert.equal(patches.length, 1);
   assert.equal(patches[0].name, 'Public PR test gates');
   assert.equal(
     checkDefinitions({ action: 'publish', runGates: false }).image,
     'Public CD publish',
   );
+});
+
+test('independent callbacks fail closed on every missing or failed job, changed source and callback identity', async () => {
+  const input = normalize(environment);
+  const snapshot = await validateRequest(input, fixture());
+  for (const mode of ['quality', 'gates']) {
+    const job = mode === 'quality' ? 'runner' : 'gate';
+    for (const result of ['failure', 'cancelled', 'skipped', undefined]) {
+      const patches = [];
+      const check = {
+        app: { id: 5497722 },
+        head_sha: head,
+        name: checkDefinitions(input)[mode],
+        external_id: `sandboxpi:${input.requestId}:${mode}`,
+      };
+      const api = async (path, method, body) => {
+        if (path.startsWith('/check-runs/')) {
+          if (method === 'PATCH') patches.push(body);
+          return check;
+        }
+        return fixture()(path);
+      };
+      const env = {
+        ...environment,
+        SOURCE_SNAPSHOT: JSON.stringify(snapshot),
+        [`${mode.toUpperCase()}_ID`]: '1',
+        JOB_NEEDS: JSON.stringify({
+          prepare: { result: 'success' },
+          [job]: { result },
+        }),
+      };
+      await assert.rejects(report(mode, env, api));
+      assert.deepEqual(
+        patches.map((patch) => patch.conclusion),
+        ['failure'],
+      );
+      for (const change of [
+        { app: { id: 1 } },
+        { head_sha: base },
+        { name: 'other' },
+        { external_id: `sandboxpi:other:${mode}` },
+      ]) {
+        patches.length = 0;
+        await assert.rejects(
+          report(mode, env, async (path, method, body) =>
+            (!method || method === 'GET') && path.startsWith('/check-runs/')
+              ? { ...check, ...change }
+              : api(path, method, body),
+          ),
+        );
+        assert.equal(patches.length, 0);
+      }
+      patches.length = 0;
+      await assert.rejects(
+        report(
+          mode,
+          {
+            ...env,
+            JOB_NEEDS: JSON.stringify({
+              prepare: { result: 'success' },
+              [job]: { result: 'success' },
+            }),
+          },
+          async (path, ...args) =>
+            path === '/branches/alpha'
+              ? { commit: { sha: merge } }
+              : api(path, ...args),
+        ),
+      );
+      assert.deepEqual(
+        patches.map((patch) => patch.conclusion),
+        ['failure'],
+      );
+    }
+  }
+});
+
+test('discovery reads authenticated terminal callbacks, never rewrites them or passes failed callback jobs', async () => {
+  const input = normalize(environment),
+    snapshot = await validateRequest(input, fixture());
+  for (const change of [
+    {},
+    { status: 'in_progress' },
+    { conclusion: 'failure' },
+    { app: { id: 1 } },
+    { external_id: 'wrong' },
+  ]) {
+    for (const callbackResult of ['success', 'failure', undefined]) {
+      const patches = [];
+      const env = {
+        ...environment,
+        SOURCE_SNAPSHOT: JSON.stringify(snapshot),
+        QUALITY_ID: '1',
+        GATES_ID: '2',
+        WATCH_CHECK_ID: '3',
+        JOB_NEEDS: JSON.stringify({
+          prepare: { result: 'success' },
+          runner: { result: 'success' },
+          gate: { result: 'success' },
+          quality_result: { result: callbackResult },
+          gates_result: { result: 'success' },
+        }),
+      };
+      const api = async (path, method, body) => {
+        if (method === 'PATCH') {
+          patches.push({ path, ...body });
+          return {};
+        }
+        if (path === '/check-runs/3')
+          return {
+            app: { id: 5497722 },
+            name: 'Public validation request',
+            head_sha: head,
+            external_id: `sandboxpi:watch:${input.requestId}`,
+          };
+        assert.ok(
+          ['/check-runs/1', '/check-runs/2'].includes(path),
+          'Discovery must not revalidate an already merged PR',
+        );
+        const mode = path.endsWith('/1') ? 'quality' : 'gates';
+        return {
+          app: { id: 5497722 },
+          name: checkDefinitions(input)[mode],
+          head_sha: head,
+          external_id: `sandboxpi:${input.requestId}:${mode}`,
+          status: 'completed',
+          conclusion: 'success',
+          ...(mode === 'quality' ? change : {}),
+        };
+      };
+      const success =
+        !Object.keys(change).length && callbackResult === 'success';
+      if (success) await report('finish', env, api);
+      else await assert.rejects(report('finish', env, api));
+      assert.deepEqual(
+        patches.map(({ path, conclusion }) => ({ path, conclusion })),
+        [
+          {
+            path: '/check-runs/3',
+            conclusion: success ? 'success' : 'failure',
+          },
+        ],
+      );
+    }
+  }
+});
+
+test('image finalization retains source revalidation and every applicable callback prerequisite', async () => {
+  const imageEnv = {
+    ...environment,
+    PUBLIC_ACTION: 'publish',
+    SOURCE_PR: '',
+    RUN_GATES: 'true',
+    AGS_CHANNEL: 'alpha',
+  };
+  const input = normalize(imageEnv),
+    snapshot = await validateRequest(input, fixture());
+  for (const fault of ['none', 'source', 'quality', 'callback']) {
+    const patches = [];
+    const env = {
+      ...imageEnv,
+      SOURCE_SNAPSHOT: JSON.stringify(snapshot),
+      QUALITY_ID: '1',
+      GATES_ID: '2',
+      IMAGE_ID: '3',
+      JOB_NEEDS: JSON.stringify({
+        prepare: { result: 'success' },
+        runner: { result: 'success' },
+        gate: { result: 'success' },
+        image: { result: 'success' },
+        quality_result: {
+          result: fault === 'callback' ? 'failure' : 'success',
+        },
+        gates_result: { result: 'success' },
+      }),
+    };
+    const api = async (path, method, body) => {
+      if (method === 'PATCH') {
+        patches.push(body);
+        return {};
+      }
+      if (path.startsWith('/check-runs/')) {
+        const phase = path.endsWith('/1')
+          ? 'quality'
+          : path.endsWith('/2')
+            ? 'gates'
+            : 'image';
+        return {
+          name: checkDefinitions(input)[phase],
+          app: { id: 5497722 },
+          head_sha: head,
+          external_id: `sandboxpi:${input.requestId}:${phase}`,
+          status: 'completed',
+          conclusion:
+            fault === 'quality' && phase === 'quality' ? 'failure' : 'success',
+        };
+      }
+      if (fault === 'source' && path.startsWith('/compare/'))
+        return { status: 'diverged' };
+      return fixture()(path);
+    };
+    if (fault === 'none') await report('finish', env, api);
+    else await assert.rejects(report('finish', env, api));
+    assert.deepEqual(
+      patches.map(({ name, conclusion }) => ({ name, conclusion })),
+      [
+        {
+          name: 'Public CD publish',
+          conclusion: fault === 'none' ? 'success' : 'failure',
+        },
+      ],
+    );
+  }
 });
 
 test('publish always requests the complete gate matrix and full scope; optional scope defaults preserve older callers', () => {

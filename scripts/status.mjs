@@ -51,20 +51,26 @@ export async function report(
     }
     return;
   }
-  assert.equal(mode, 'finish');
+  assert.ok(['quality', 'gates', 'finish'].includes(mode));
+  assert.ok(mode === 'finish' || Object.hasOwn(definitions, mode));
   const snapshot = JSON.parse(environment.SOURCE_SNAPSHOT);
-  const results = conclusions(input, JSON.parse(environment.JOB_NEEDS || '{}'));
+  const needs = JSON.parse(environment.JOB_NEEDS || '{}');
+  const results = conclusions(input, needs);
   try {
     assert.deepEqual(
       input,
       Object.fromEntries(Object.keys(input).map((key) => [key, snapshot[key]])),
     );
-    await revalidate(snapshot, api);
+    // Each required check validates the live candidate immediately before its
+    // own callback. The final discovery receipt must not invalidate a PR that
+    // already auto-merged after both callbacks became green.
+    if (mode !== 'finish' || definitions.image) await revalidate(snapshot, api);
   } catch {
     for (const phase of Object.keys(results)) results[phase] = 'failure';
   }
   let failed = false;
   for (const [phase, name] of Object.entries(definitions)) {
+    if (mode !== 'finish' && phase !== mode) continue;
     const id = environment[`${phase.toUpperCase()}_ID`];
     if (!id) {
       failed = true;
@@ -77,6 +83,14 @@ export async function report(
       assert.equal(check.name, name);
       assert.equal(check.head_sha, input.sha);
       assert.equal(check.external_id, external(phase));
+      if (mode === 'finish' && phase !== 'image') {
+        assert.equal(check.status, 'completed');
+        assert.equal(check.conclusion, 'success');
+        assert.equal(results[phase], 'success');
+        assert.equal(needs[`${phase}_result`]?.result, 'success');
+        continue;
+      }
+      if (phase === 'image' && failed) results.image = 'failure';
       await api(`/check-runs/${id}`, 'PATCH', {
         name,
         status: 'completed',
@@ -91,7 +105,7 @@ export async function report(
       failed = true;
     }
   }
-  if (environment.WATCH_CHECK_ID) {
+  if (mode === 'finish' && environment.WATCH_CHECK_ID) {
     assert.match(environment.WATCH_CHECK_ID, /^[1-9]\d*$/u);
     const marker = await api(`/check-runs/${environment.WATCH_CHECK_ID}`);
     assert.equal(marker.app?.id, 5497722);
