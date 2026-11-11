@@ -69,6 +69,7 @@ export async function authenticateEvidence(
     environment,
     snapshot,
     phase,
+    diagnostics = {},
     ancestors = () => {
       throw new Error('Validation ancestry is unavailable');
     },
@@ -77,21 +78,29 @@ export async function authenticateEvidence(
     },
   } = {},
 ) {
+  diagnostics.hit = false;
+  diagnostics.reason = 'missing-attestation';
   try {
     const envelope = JSON.parse(
       readFileSync(join(directory, 'attestation.json'), 'utf8'),
     );
     const payload = envelope.payload;
+    diagnostics.reason = 'invalid-envelope';
     assert.ok(
       payload.schemaVersion === 1 &&
         payload.phase === phase &&
-        payload.branch === snapshot.branch &&
-        payload.executorRevision === environment.GITHUB_SHA &&
         /^[a-f0-9]{40}$/u.test(payload.sourceSha) &&
         /^\d+$/u.test(String(envelope.checkId)),
     );
+    diagnostics.reason = 'executor-changed';
+    assert.equal(payload.executorRevision, environment.GITHUB_SHA);
+    diagnostics.reason = 'channel-changed';
+    assert.equal(payload.branch, snapshot.branch);
+    diagnostics.reason = 'manifest-mismatch';
     assert.deepEqual(payload.manifest, evidenceManifest(directory));
+    diagnostics.reason = 'check-read-failed';
     const check = await api(`/check-runs/${envelope.checkId}`);
+    diagnostics.reason = 'untrusted-app-check';
     assert.ok(
       check.app?.id === 5497722 &&
         check.name === evidenceName &&
@@ -105,16 +114,20 @@ export async function authenticateEvidence(
         check.output?.summary === proofSummary(payload),
       'Unauthenticated validation cache',
     );
+    diagnostics.reason = 'non-ancestor-or-missing-history';
     const commits = await ancestors(payload.sourceSha, snapshot.candidate);
+    diagnostics.reason = 'unbounded-history';
     assert.ok(
       Array.isArray(commits) && commits.length <= 100,
       'Unbounded validation delta',
     );
     const identity = phase === 'quality' ? 'quality' : 'gates';
     const observed = Date.parse(check.completed_at);
+    diagnostics.reason = 'invalid-check-time';
     assert.ok(Number.isFinite(observed));
     // Include the previous head itself to observe later retries of that SHA.
     for (const commit of [...new Set([payload.sourceSha, ...commits])]) {
+      diagnostics.reason = 'history-read-failed';
       const runs = await checks(commit);
       for (const current of runs) {
         if (current.app?.id !== 5497722) continue;
@@ -131,12 +144,15 @@ export async function authenticateEvidence(
           Date.parse(current.started_at) || 0,
           Date.parse(current.completed_at) || 0,
         );
+        diagnostics.reason = 'newer-unrepresented-attempt';
         assert.ok(
           time <= observed,
           'A newer validation attempt is absent from this cache',
         );
       }
     }
+    diagnostics.hit = true;
+    diagnostics.reason = 'authenticated';
     return true;
   } catch {
     // A dependency cache is not authoritative proof. Discard only evidence and
