@@ -82,15 +82,18 @@ async function fixture(t) {
 }
 test('only the protected App attestation authenticates unchanged partial unit results', async (t) => {
   const f = await fixture(t);
+  const diagnostics = {};
   assert.equal(f.check.name, evidenceName);
   assert.ok(
     await authenticateEvidence(f.directory, {
       ...f,
+      diagnostics,
       phase: 'quality',
       snapshot: { ...f.snapshot, requestId: 'current' },
       ancestors: () => ['e'.repeat(40)],
     }),
   );
+  assert.deepEqual(diagnostics, { hit: true, reason: 'authenticated' });
   assert.equal(
     JSON.parse(readFileSync(join(f.directory, 'events/1234.json'))).checkedAt,
     f.event.checkedAt,
@@ -119,6 +122,7 @@ test('newer unrepresented attempts, changed executor, wrong App and tampered pay
     const f = await fixture(t);
     const options = {
       ...f,
+      diagnostics: {},
       phase: 'quality',
       snapshot: { ...f.snapshot, requestId: 'current' },
     };
@@ -145,6 +149,16 @@ test('newer unrepresented attempts, changed executor, wrong App and tampered pay
         throw new Error('Not an ancestor');
       };
     assert.equal(await authenticateEvidence(f.directory, options), false, mode);
+    assert.equal(
+      options.diagnostics.reason,
+      {
+        newer: 'newer-unrepresented-attempt',
+        executor: 'executor-changed',
+        app: 'untrusted-app-check',
+        tamper: 'manifest-mismatch',
+        ancestry: 'non-ancestor-or-missing-history',
+      }[mode],
+    );
     assert.ok(!existsSync(join(f.directory, 'events/1234.json')));
   }
 });

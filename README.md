@@ -126,7 +126,14 @@ required reviews, protected PR delivery and all checks without bypass actors.
 ## Private security summaries
 
 Ordinary quality requests without a full matrix also execute the security gate.
-Full matrices reuse their independent gate-security job. After private report
+After frozen installation, quality and fresh security run concurrently; every
+failure waits for the sibling before export/callback. Full matrices retain their
+independent gate-security job without an additional quality-phase scan.
+Private `public-commands.json` records command durations and parallel status;
+`cache-auth.json` distinguishes restore failure, missing attestation, changed
+executor/channel, manifest mismatch, untrusted App and incomplete/newer history.
+Source unit results separately record precise reuse/miss reasons and changed
+input groups. These diagnostics never enter public logs, summaries or caches. After private report
 export, the trusted runtime publishes a bounded `Security scan summary` Check
 through App 5497722 to the private source repository. Only fixed scanner IDs,
 completion states and numeric severity counts are published; no source paths,

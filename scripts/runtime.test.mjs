@@ -17,6 +17,8 @@ import { test } from 'node:test';
 import { gates } from './request.mjs';
 import {
   captured,
+  capturedAsync,
+  executePhaseCommands,
   phaseCommands,
   phaseCachePaths,
   phaseReportPaths,
@@ -24,6 +26,140 @@ import {
   storageKeys,
   verifyPrivateStorage,
 } from './runtime.mjs';
+
+test('frozen installation precedes concurrent quality/security and a failure drains its sibling', async () => {
+  const commands = phaseCommands('quality'),
+    timings = [],
+    started = [];
+  let release,
+    dependencyDone = false,
+    securityDone = false;
+  const sibling = new Promise((resolve) => {
+    release = resolve;
+  });
+  const result = executePhaseCommands(commands, {
+    phase: 'quality',
+    runGates: false,
+    timings,
+    async run([stage]) {
+      started.push(stage);
+      if (stage === 'dependencies') {
+        dependencyDone = true;
+        return;
+      }
+      assert.ok(dependencyDone);
+      if (stage === 'quality') throw new Error('fixture failure');
+      await sibling;
+      securityDone = true;
+    },
+  });
+  let settled = false;
+  const observed = result.then(
+    () => {
+      settled = true;
+    },
+    (error) => {
+      settled = true;
+      return error;
+    },
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(started, ['dependencies', 'quality', 'security']);
+  assert.equal(settled, false);
+  release();
+  assert.ok((await observed) instanceof AggregateError);
+  assert.equal(securityDone, true);
+  assert.deepEqual(
+    timings.map(({ stage, status }) => [stage, status]),
+    [
+      ['dependencies', 'passed'],
+      ['quality', 'failed'],
+      ['security', 'passed'],
+    ],
+  );
+});
+test('failed installation launches no source checks; matrices scan security once and other phases stay ordered', async () => {
+  const started = [];
+  await assert.rejects(
+    executePhaseCommands(phaseCommands('quality'), {
+      phase: 'quality',
+      runGates: false,
+      run: async ([stage]) => {
+        started.push(stage);
+        throw Error('install');
+      },
+    }),
+  );
+  assert.deepEqual(started, ['dependencies']);
+  const timings = [];
+  await executePhaseCommands(phaseCommands('quality'), {
+    phase: 'quality',
+    runGates: true,
+    timings,
+    run: async ([stage]) => started.push(stage),
+  });
+  assert.equal(started.includes('security'), false);
+  assert.equal(
+    timings.find((item) => item.stage === 'security').status,
+    'separate-matrix',
+  );
+  let active = 0,
+    maximum = 0;
+  await executePhaseCommands(phaseCommands('gate-boundary'), {
+    phase: 'gate-boundary',
+    runGates: true,
+    run: async () => {
+      maximum = Math.max(maximum, ++active);
+      await new Promise((resolve) => setImmediate(resolve));
+      active--;
+    },
+  });
+  assert.equal(maximum, 1);
+});
+test('asynchronous source capture retains private output, removes credentials and enforces process deadlines', async (t) => {
+  const root = directory(t),
+    output = join(root, 'async.log'),
+    descriptor = openSync(output, 'w', 0o600);
+  try {
+    const childEnv = sourceEnvironment(
+      {
+        ...process.env,
+        GITHUB_TOKEN: 'credential',
+        GITHUB_OUTPUT: join(root, 'command'),
+      },
+      snapshot,
+      root,
+      root,
+    );
+    await capturedAsync(
+      process.execPath,
+      [
+        '-e',
+        "console.log('PRIVATE_ASYNC');if(process.env.GITHUB_TOKEN||process.env.GITHUB_OUTPUT)process.exit(8)",
+      ],
+      { cwd: root, env: childEnv, descriptor },
+    );
+    assert.match(readFileSync(output, 'utf8'), /PRIVATE_ASYNC/u);
+    assert.equal(
+      await capturedAsync(
+        process.execPath,
+        ['-e', 'setInterval(()=>{},1000)'],
+        { cwd: root, env: childEnv, descriptor, timeout: 50, optional: true },
+      ),
+      false,
+    );
+    await assert.rejects(
+      capturedAsync('missing-fixture-executable', [], {
+        cwd: root,
+        env: childEnv,
+        descriptor,
+      }),
+      /Private phase command failed/u,
+    );
+  } finally {
+    closeSync(descriptor);
+  }
+});
 
 const env = {
   GITHUB_REPOSITORY: 'BANG404/sandboxpi-actions',

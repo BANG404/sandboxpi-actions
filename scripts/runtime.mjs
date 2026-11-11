@@ -4,7 +4,7 @@ import {
   authenticateEvidence,
   attestEvidence,
 } from './validation-evidence.mjs';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import {
   closeSync,
   copyFileSync,
@@ -83,6 +83,85 @@ export function captured(
       `Private phase command failed: ${program}, status ${result.status}, error ${result.error?.message || 'none'}`,
     );
   return ok;
+}
+export function capturedAsync(
+  program,
+  args,
+  { cwd, env, descriptor, input, optional = false, timeout = 85 * 60_000 },
+) {
+  return new Promise((resolve, reject) => {
+    let error;
+    const child = spawn(program, args, {
+      cwd,
+      env,
+      stdio: [input === undefined ? 'ignore' : 'pipe', descriptor, descriptor],
+    });
+    const timer = setTimeout(() => child.kill('SIGKILL'), timeout);
+    timer.unref();
+    child.once('error', (cause) => {
+      error = cause;
+      clearTimeout(timer);
+    });
+    if (input !== undefined) {
+      child.stdin.on('error', () => {});
+      child.stdin.end(input);
+    }
+    child.once('close', (code, signal) => {
+      clearTimeout(timer);
+      const ok = !error && code === 0 && !signal;
+      if (ok || optional) resolve(ok);
+      else
+        reject(
+          new Error(
+            `Private phase command failed: ${program}, status ${code}, signal ${signal || 'none'}, error ${error?.message || 'none'}`,
+          ),
+        );
+    });
+  });
+}
+// Only quality and its independent fresh scanner overlap, after frozen install.
+// Every failure is joined before exports or callbacks; image/gate order stays fixed.
+export async function executePhaseCommands(
+  commands,
+  { phase, runGates, run, timings = [], now = () => performance.now() },
+) {
+  const step = async (entry, parallel) => {
+    const start = now();
+    const timing = { stage: entry[0], status: 'running', parallel };
+    timings.push(timing);
+    try {
+      await run(entry, parallel);
+      timing.status = 'passed';
+    } catch (error) {
+      timing.status = 'failed';
+      throw error;
+    } finally {
+      timing.durationMs = Math.round(now() - start);
+    }
+  };
+  if (phase !== 'quality') {
+    for (const entry of commands) await step(entry, false);
+    return;
+  }
+  await step(commands[0], false);
+  const selected = commands
+    .slice(1)
+    .filter(([stage]) => stage !== 'security' || !runGates);
+  if (runGates)
+    timings.push({
+      stage: 'security',
+      status: 'separate-matrix',
+      durationMs: 0,
+      parallel: false,
+    });
+  const results = await Promise.allSettled(
+    selected.map((entry) => step(entry, true)),
+  );
+  const failures = results
+    .filter((result) => result.status === 'rejected')
+    .map((result) => result.reason);
+  if (failures.length)
+    throw new AggregateError(failures, 'Private source verification failed');
 }
 export async function verifyPrivateStorage(packages, inspect, request = fetch) {
   for (const name of packages) {
@@ -214,6 +293,8 @@ export async function runPhase(environment) {
   const cachePaths = phaseCachePaths(phase);
   const evidenceDirectory = join(root, '.data/validation/evidence');
   let unitEvidence = false;
+  let cacheRestored = false;
+  const commandTimings = [];
   const bundle = (reference, paths, base) => {
     const context = mkdtempSync(join(temporary, 'bundle-'));
     try {
@@ -292,7 +373,11 @@ export async function runPhase(environment) {
     privacy = true;
     for (const path of cachePaths)
       mkdirSync(join(root, path), { recursive: true });
-    if (command('docker', ['pull', keys.cache], { optional: true })) {
+    if (
+      (cacheRestored = command('docker', ['pull', keys.cache], {
+        optional: true,
+      }))
+    ) {
       const container = `private-cache-${environment.GITHUB_RUN_ID}-${environment.GITHUB_RUN_ATTEMPT}-${phase}`;
       try {
         command('docker', [
@@ -340,11 +425,15 @@ export async function runPhase(environment) {
         );
         return result.stdout;
       };
+      const diagnostics = {
+        restore: cacheRestored ? 'restored' : 'unavailable',
+      };
       const valid = await authenticateEvidence(evidenceDirectory, {
         api,
         environment,
         snapshot,
         phase,
+        diagnostics,
         ancestors: (base, head) => {
           localGit(['merge-base', '--is-ancestor', base, head]);
           return localGit(['rev-list', `${base}..${head}`])
@@ -364,6 +453,18 @@ export async function runPhase(environment) {
         },
       });
       childEnv.VALIDATION_EVIDENCE_TRUSTED = String(valid);
+      const reportDirectory = join(
+        root,
+        phase.startsWith('gate-')
+          ? `.data/test-gates/${phase.slice(5)}`
+          : '.data/validation',
+      );
+      mkdirSync(reportDirectory, { recursive: true, mode: 0o700 });
+      writeFileSync(
+        join(reportDirectory, 'cache-auth.json'),
+        JSON.stringify({ phase, ...diagnostics }),
+        { mode: 0o600 },
+      );
     }
     if (phase === 'image') {
       // The source image driver can use a credential-free Buildx builder; registry auth remains outside source env.
@@ -385,28 +486,34 @@ export async function runPhase(environment) {
       childEnv.VALIDATE_AGS = input.action === 'validate' ? 'true' : 'false';
       childEnv.AGS_CHANNEL = environment.AGS_CHANNEL || 'production';
     }
-    for (const [stage, program, args] of commands) {
-      if (stage === 'security' && snapshot.runGates) continue;
-      console.log(`Phase ${phase}: ${stage}`);
-      const env = { ...childEnv };
-      if (stage === 'image')
-        for (const key of [
-          'GITHUB_TOKEN',
-          'SKILL_SOURCES_TOKEN',
-          'ACR_USERNAME',
-          'ACR_PASSWORD',
-          'WOODPECKER_TOKEN',
-          'WOODPECKER_REPO_ID',
-          'AGS_TAG',
-          'TENCENTCLOUD_SECRET_ID',
-          'TENCENTCLOUD_SECRET_KEY',
-          'TENCENTCLOUD_SESSION_TOKEN',
-        ])
-          if (environment[key]) env[key] = environment[key];
-      captured(program, args, { cwd: root, env, descriptor });
-      if (stage === 'scanner-setup')
-        childEnv.PATH = `${childEnv.RUNNER_TEMP}/trivy-bin:${childEnv.PATH}`;
-    }
+    await executePhaseCommands(commands, {
+      phase,
+      runGates: snapshot.runGates,
+      timings: commandTimings,
+      run: async ([stage, program, args], parallel) => {
+        console.log(`Phase ${phase}: ${stage}`);
+        const env = { ...childEnv };
+        if (stage === 'image')
+          for (const key of [
+            'GITHUB_TOKEN',
+            'SKILL_SOURCES_TOKEN',
+            'ACR_USERNAME',
+            'ACR_PASSWORD',
+            'WOODPECKER_TOKEN',
+            'WOODPECKER_REPO_ID',
+            'AGS_TAG',
+            'TENCENTCLOUD_SECRET_ID',
+            'TENCENTCLOUD_SECRET_KEY',
+            'TENCENTCLOUD_SESSION_TOKEN',
+          ])
+            if (environment[key]) env[key] = environment[key];
+        if (parallel)
+          await capturedAsync(program, args, { cwd: root, env, descriptor });
+        else captured(program, args, { cwd: root, env, descriptor });
+        if (stage === 'scanner-setup')
+          childEnv.PATH = `${childEnv.RUNNER_TEMP}/trivy-bin:${childEnv.PATH}`;
+      },
+    });
     await revalidate(snapshot, github(environment.SOURCE_TOKEN));
   } catch (error) {
     writeSync(
@@ -415,6 +522,20 @@ export async function runPhase(environment) {
     );
     failure = true;
   } finally {
+    try {
+      if (phase === 'quality' && privacy) {
+        const directory = join(root, '.data/validation');
+        mkdirSync(directory, { recursive: true, mode: 0o700 });
+        writeFileSync(
+          join(directory, 'public-commands.json'),
+          JSON.stringify({ phase, commands: commandTimings }),
+          { mode: 0o600 },
+        );
+      }
+    } catch {
+      failure = true;
+      writeSync(descriptor, '\nPrivate command timing export failed\n');
+    }
     try {
       if (privacy && cacheReady) {
         await verifyPrivateStorage(['sandboxpi-ci-data'], (ref) =>
