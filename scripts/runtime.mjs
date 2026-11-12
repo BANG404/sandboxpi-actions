@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict';
 import { publishSecurity, securityApi } from './security-summary.mjs';
 import {
-  authenticateEvidence,
-  attestEvidence,
-} from './validation-evidence.mjs';
+  beginEvidenceAttempt,
+  restoreEvidenceHistory,
+  sealEvidenceAttempt,
+  evidenceArchive,
+  validationChecks,
+  invalidatedReuses,
+} from './validation-history.mjs';
 import { spawn, spawnSync } from 'node:child_process';
 import {
   closeSync,
@@ -217,7 +221,7 @@ export function storageKeys(environment, phase) {
   assert.match(environment.GITHUB_RUN_ID || '', /^[1-9]\d*$/u);
   assert.match(environment.GITHUB_RUN_ATTEMPT || '', /^[1-9]\d*$/u);
   return {
-    cache: `${dataPackage}:deps-${environment.PUBLIC_ACTION === 'pr' || environment.SOURCE_PR ? 'pr-' : ''}${phase}-${phase === 'image' ? 'v2' : phase === 'quality' ? 'v5' : 'v4'}`,
+    cache: `${dataPackage}:deps-${environment.PUBLIC_ACTION === 'pr' || environment.SOURCE_PR ? 'pr-' : ''}${phase}-${phase === 'image' ? 'v2' : phase === 'quality' ? 'v6' : 'v5'}`,
     report: `${dataPackage}:report-${environment.GITHUB_RUN_ID}-${environment.GITHUB_RUN_ATTEMPT}-${phase}`,
   };
 }
@@ -292,8 +296,12 @@ export async function runPhase(environment) {
     failure = false;
   const cachePaths = phaseCachePaths(phase);
   const evidenceDirectory = join(root, '.data/validation/evidence');
+  const reuseJournal = join(temporary, 'reuse-journal');
+  childEnv.VALIDATION_REUSE_JOURNAL = reuseJournal;
+  childEnv.VALIDATION_EVIDENCE_DIRECTORY = evidenceDirectory;
   let unitEvidence = false;
   let cacheRestored = false;
+  let evidenceAttempt, evidenceHistory, evidenceOptions;
   const commandTimings = [];
   const bundle = (reference, paths, base) => {
     const context = mkdtempSync(join(temporary, 'bundle-'));
@@ -428,12 +436,24 @@ export async function runPhase(environment) {
       const diagnostics = {
         restore: cacheRestored ? 'restored' : 'unavailable',
       };
-      const valid = await authenticateEvidence(evidenceDirectory, {
+      const observations = new Map();
+      evidenceOptions = {
+        checks: (sha) => {
+          if (!observations.has(sha))
+            observations.set(sha, validationChecks(api, sha));
+          return observations.get(sha);
+        },
+        recentCommits: () =>
+          localGit(['rev-list', '--max-count=50', snapshot.candidate])
+            .trim()
+            .split('\n')
+            .filter(Boolean),
         api,
         environment,
         snapshot,
         phase,
         diagnostics,
+        executorRepository: 'BANG404/sandboxpi-actions',
         ancestors: (base, head) => {
           localGit(['merge-base', '--is-ancestor', base, head]);
           return localGit(['rev-list', `${base}..${head}`])
@@ -441,18 +461,52 @@ export async function runPhase(environment) {
             .split('\n')
             .filter(Boolean);
         },
-        checks: async (sha) => {
-          const result = await api(
-            `/commits/${sha}/check-runs?filter=all&per_page=100`,
-          );
-          assert.ok(
-            result.total_count <= result.check_runs.length,
-            'Incomplete validation history',
-          );
-          return result.check_runs;
+        loadArchive: async (payload) => {
+          const reference = `${dataPackage}:${evidenceArchive(payload.runId, payload.runAttempt, phase)}`;
+          const destination = mkdtempSync(join(temporary, 'evidence-'));
+          const container = `private-evidence-${environment.GITHUB_RUN_ID}-${phase}`;
+          try {
+            command('docker', ['pull', reference]);
+            command('docker', [
+              'create',
+              '--name',
+              container,
+              reference,
+              '/unused',
+            ]);
+            command('docker', [
+              'cp',
+              `${container}:/payload.tar.zst`,
+              join(destination, 'payload.tar.zst'),
+            ]);
+            command('tar', [
+              '--zstd',
+              '-xf',
+              join(destination, 'payload.tar.zst'),
+              '-C',
+              destination,
+              '--no-same-owner',
+              '.data/validation/evidence',
+            ]);
+            return {
+              directory: join(destination, '.data/validation/evidence'),
+              cleanup: () =>
+                rmSync(destination, { recursive: true, force: true }),
+            };
+          } catch (error) {
+            rmSync(destination, { recursive: true, force: true });
+            throw error;
+          } finally {
+            command('docker', ['rm', '--force', container], { optional: true });
+          }
         },
+      };
+      evidenceAttempt = await beginEvidenceAttempt(evidenceOptions);
+      evidenceHistory = await restoreEvidenceHistory(evidenceDirectory, {
+        ...evidenceOptions,
+        attempt: evidenceAttempt,
       });
-      childEnv.VALIDATION_EVIDENCE_TRUSTED = String(valid);
+      childEnv.VALIDATION_EVIDENCE_TRUSTED = String(evidenceHistory.trusted);
       const reportDirectory = join(
         root,
         phase.startsWith('gate-')
@@ -514,6 +568,37 @@ export async function runPhase(environment) {
           childEnv.PATH = `${childEnv.RUNNER_TEMP}/trivy-bin:${childEnv.PATH}`;
       },
     });
+    if (unitEvidence && existsSync(reuseJournal)) {
+      const reconcile = async () => {
+        evidenceHistory = await restoreEvidenceHistory(evidenceDirectory, {
+          ...evidenceOptions,
+          checks: (sha) => validationChecks(evidenceOptions.api, sha),
+          attempt: evidenceAttempt,
+          verifiedSeed: evidenceHistory.verifiedSeed,
+        });
+        return invalidatedReuses(evidenceDirectory, reuseJournal);
+      };
+      if ((await reconcile()).length) {
+        rmSync(reuseJournal, { recursive: true, force: true });
+        childEnv.VALIDATION_EVIDENCE_TRUSTED = String(evidenceHistory.trusted);
+        // Re-enter the fixed suite once: valid units retain their receipts, while
+        // invalidated units execute. Security already ran freshly in this phase.
+        const [program, ...args] =
+          phase === 'quality'
+            ? ['bun', 'run', 'verify']
+            : ['node', 'scripts/test-gate.mjs', phase.slice(5)];
+        await capturedAsync(program, args, {
+          cwd: root,
+          env: childEnv,
+          descriptor,
+        });
+        assert.equal(
+          (await reconcile()).length,
+          0,
+          'Concurrent evidence invalidated reused units again',
+        );
+      }
+    }
     await revalidate(snapshot, github(environment.SOURCE_TOKEN));
   } catch (error) {
     writeSync(
@@ -542,11 +627,17 @@ export async function runPhase(environment) {
           command('docker', ['manifest', 'inspect', ref]),
         );
         if (unitEvidence)
-          await attestEvidence(evidenceDirectory, {
-            api: github(environment.SOURCE_TOKEN),
-            environment,
-            snapshot,
-            phase,
+          await sealEvidenceAttempt(evidenceDirectory, {
+            ...evidenceOptions,
+            attempt: evidenceAttempt,
+            history: evidenceHistory,
+            success: !failure,
+            exportArchive: (payload) =>
+              bundle(
+                `${dataPackage}:${evidenceArchive(payload.runId, payload.runAttempt, phase)}`,
+                ['.data/validation/evidence'],
+                root,
+              ),
           });
         bundle(keys.cache, cachePaths, root);
       }

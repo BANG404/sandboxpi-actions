@@ -79,8 +79,8 @@ An unavailable callback API leaves required evidence incomplete, never green.
 Root must verify actual callbacks and privacy before migrating private rules.
 
 Project data never enters public Actions artifacts, caches or summaries. Private
-GHCR `sandboxpi-ci-data` stores `deps-quality-v5` including private Chromium
-binaries, `deps-gate-NAME-v4` gate caches (image retains v2) and
+GHCR `sandboxpi-ci-data` stores `deps-quality-v6` including private Chromium
+binaries, `deps-gate-NAME-v5` gate caches (image retains v2) and
 `report-RUN-ATTEMPT-PHASE` reports. PHASE is quality, image or gate-NAME.
 Image Buildx uses local mode=max runtime/AGS caches inside its private phase
 bundle, so package-write credentials stay outside the source environment.
@@ -162,9 +162,22 @@ Module impact plans and changed-source coverage follow the private repository
 `.data/validation` and per-gate private reports include their exact selection;
 never expose these files through public Actions artifacts or caches.
 
-The trusted outer bootstrap authenticates per-unit cache manifests with the
-private source App check `Public validation unit evidence`; required aggregate
-checks retain their authority. Restore only exact protected-executor/phase/source
-proof with complete newer-attempt history. Quality/gate caches use v5/v4 and
-include owner-only `.data/validation/evidence`; image caches remain v2. Successful
-unit observations can survive a failed overall run without refreshed timestamps.
+The trusted outer bootstrap admits each phase/attempt through App 5497722
+`Public validation unit attempt` before running source. Schema-2 unit manifests
+bind that attempt, original source/candidate, executor, outputs and covered history.
+The immutable private `evidence-RUN-ATTEMPT-PHASE-v2` archive is stored before
+`Public validation unit evidence` succeeds. Required aggregate checks retain their
+authority; partial unit success never substitutes for either required callback.
+
+Quality/gate dependency caches use v6/v5; image remains v2. Mutable caches are only
+seeds. A displaced or unrelated seed searches at most 50 ancestral commits and 20
+immutable snapshots. Restoration authenticates exact executor/phase/channel/App,
+complete paginated check history and ancestry, importing only newly executed units
+from intervening attempts. Failed aggregates retain their successful units without
+refreshing timestamps; matching failure/incomplete records still fence old green.
+Unsealed attempts, missing archives and legacy attempts conservatively fence older
+receipts. Private `cache-auth.json` records imported/fenced attempts and seed origin.
+Before callback, a private reuse journal is reconciled against newly arrived
+history. Invalidated units re-enter the fixed suite once, preserving other valid
+unit receipts; a second invalidation fails closed. Project data and journals never
+enter public Actions storage or logs. Archive eviction selects fresh execution.
