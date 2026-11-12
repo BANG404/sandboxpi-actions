@@ -395,8 +395,8 @@ test('PR cache exports cannot overwrite protected-channel cache keys', () => {
 });
 
 test('expanded security caches use a new generation without restoring incompatible archives', () => {
-  assert.match(storageKeys(env, 'quality').cache, /quality-v5$/u);
-  assert.match(storageKeys(env, 'gate-security').cache, /gate-security-v4$/u);
+  assert.match(storageKeys(env, 'quality').cache, /quality-v6$/u);
+  assert.match(storageKeys(env, 'gate-security').cache, /gate-security-v5$/u);
   assert.match(storageKeys(env, 'image').cache, /image-v2$/u);
   assert.ok(phaseCachePaths('gate-security').includes('.data/security-tools'));
   assert.ok(phaseCachePaths('quality').includes('.data/validation/evidence'));
