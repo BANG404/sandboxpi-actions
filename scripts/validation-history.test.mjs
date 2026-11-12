@@ -17,6 +17,7 @@ import {
   sealEvidenceAttempt,
   validationChecks,
   invalidatedReuses,
+  terminalAttemptTime,
 } from './validation-history.mjs';
 
 function fixture(t) {
@@ -259,6 +260,70 @@ test('a storage failure cannot publish a successful evidence proof', async (t) =
   assert.ok(
     [...f.checks.values()].every((check) => check.status !== 'completed'),
   );
+});
+
+test('cancelled attempts fence older receipts but cease poisoning later freshly verified results', async (t) => {
+  const f = fixture(t),
+    path = f.directory('seed');
+  const original = await beginEvidenceAttempt(f.options);
+  f.event(path, 'old-pass');
+  await f.seal(path, original);
+  const cancelled = await beginEvidenceAttempt({
+    ...f.options,
+    environment: { ...f.environment, GITHUB_RUN_ID: '2' },
+  });
+  const run = {
+    id: 2,
+    run_attempt: 1,
+    head_sha: f.environment.GITHUB_SHA,
+    repository: { full_name: f.options.executorRepository },
+    status: 'completed',
+    conclusion: 'cancelled',
+    updated_at: new Date().toISOString(),
+  };
+  const options = {
+    ...f.options,
+    readAttempt: async () => run,
+    environment: { ...f.environment, GITHUB_RUN_ID: '3' },
+  };
+  const attempt = await beginEvidenceAttempt(options);
+  const history = await restoreEvidenceHistory(path, { ...options, attempt });
+  assert.equal(history.trusted, false);
+  assert.equal(
+    history.diagnostics.fencedAttempts[0].reason,
+    'terminal-attempt-without-proof',
+  );
+  assert.ok(history.coveredAttempts.includes(cancelled.checkId));
+  assert.deepEqual(history.pendingHeads, []);
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+  f.event(path, 'fresh-pass');
+  await f.seal(path, attempt, history);
+  const next = {
+    ...options,
+    environment: { ...f.environment, GITHUB_RUN_ID: '4' },
+  };
+  const restored = await restoreEvidenceHistory(path, {
+    ...next,
+    attempt: await beginEvidenceAttempt(next),
+  });
+  assert.equal(restored.trusted, true);
+  assert.deepEqual(restored.diagnostics.fencedAttempts, []);
+  for (const patch of [
+    { id: 9 },
+    { run_attempt: 2 },
+    { head_sha: 'f'.repeat(40) },
+    { status: 'in_progress' },
+    { repository: { full_name: 'foreign/repository' } },
+    { updated_at: new Date(Date.now() + 120_000).toISOString() },
+  ]) {
+    assert.equal(
+      await terminalAttemptTime(cancelled.payload, async () => ({
+        ...run,
+        ...patch,
+      })),
+      Infinity,
+    );
+  }
 });
 
 test('a displaced mutable seed is recovered from an authentic ancestral immutable archive', async (t) => {
