@@ -17,6 +17,7 @@ import {
   mkdirSync,
   mkdtempSync,
   openSync,
+  readFileSync,
   rmSync,
   writeFileSync,
   writeSync,
@@ -33,6 +34,20 @@ import {
 } from './request.mjs';
 
 export const dataPackage = 'ghcr.io/bang404/sandboxpi-ci-data';
+export function supportsEvidenceJournal(root) {
+  try {
+    const source = readFileSync(
+      join(root, 'scripts/validation-ledger.mjs'),
+      'utf8',
+    );
+    return (
+      source.includes('VALIDATION_REUSE_JOURNAL') &&
+      source.includes('VALIDATION_EVIDENCE_DIRECTORY')
+    );
+  } catch {
+    return false;
+  }
+}
 export function sourceEnvironment(environment, snapshot, root, temporary) {
   // An allowlist also removes future GitHub command files, credentials and injected Node/Bun options.
   const env = {};
@@ -438,6 +453,26 @@ export async function runPhase(environment) {
       };
       const observations = new Map();
       evidenceOptions = {
+        readAttempt: async (payload) => {
+          assert.equal(payload.executorRepository, 'BANG404/sandboxpi-actions');
+          evidenceArchive(payload.runId, payload.runAttempt, phase);
+          const response = await readResponse(
+            fetch,
+            `https://api.github.com/repos/BANG404/sandboxpi-actions/actions/runs/${payload.runId}/attempts/${payload.runAttempt}`,
+            {
+              headers: {
+                Authorization: `Bearer ${environment.GHCR_TOKEN}`,
+                Accept: 'application/vnd.github+json',
+              },
+            },
+          );
+          assert.equal(
+            response.status,
+            200,
+            'Cannot authenticate original executor attempt',
+          );
+          return response.json();
+        },
         checks: (sha) => {
           if (!observations.has(sha))
             observations.set(sha, validationChecks(api, sha));
@@ -506,7 +541,12 @@ export async function runPhase(environment) {
         ...evidenceOptions,
         attempt: evidenceAttempt,
       });
-      childEnv.VALIDATION_EVIDENCE_TRUSTED = String(evidenceHistory.trusted);
+      diagnostics.sourceProtocol = supportsEvidenceJournal(root)
+        ? 'completion-journal'
+        : 'legacy-fresh-only';
+      childEnv.VALIDATION_EVIDENCE_TRUSTED = String(
+        evidenceHistory.trusted && supportsEvidenceJournal(root),
+      );
       const reportDirectory = join(
         root,
         phase.startsWith('gate-')
@@ -580,7 +620,9 @@ export async function runPhase(environment) {
       };
       if ((await reconcile()).length) {
         rmSync(reuseJournal, { recursive: true, force: true });
-        childEnv.VALIDATION_EVIDENCE_TRUSTED = String(evidenceHistory.trusted);
+        childEnv.VALIDATION_EVIDENCE_TRUSTED = String(
+          evidenceHistory.trusted && supportsEvidenceJournal(root),
+        );
         // Re-enter the fixed suite once: valid units retain their receipts, while
         // invalidated units execute. Security already ran freshly in this phase.
         const [program, ...args] =

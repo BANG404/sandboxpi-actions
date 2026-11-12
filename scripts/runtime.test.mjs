@@ -25,7 +25,20 @@ import {
   sourceEnvironment,
   storageKeys,
   verifyPrivateStorage,
+  supportsEvidenceJournal,
 } from './runtime.mjs';
+
+test('older source ledgers without the scoped completion journal execute fresh', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'journal-capability-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  mkdirSync(join(root, 'scripts'));
+  assert.equal(supportsEvidenceJournal(root), false);
+  const path = join(root, 'scripts/validation-ledger.mjs');
+  writeFileSync(path, 'VALIDATION_REUSE_JOURNAL');
+  assert.equal(supportsEvidenceJournal(root), false);
+  writeFileSync(path, 'VALIDATION_REUSE_JOURNAL VALIDATION_EVIDENCE_DIRECTORY');
+  assert.equal(supportsEvidenceJournal(root), true);
+});
 
 test('frozen installation precedes concurrent quality/security and a failure drains its sibling', async () => {
   const commands = phaseCommands('quality'),

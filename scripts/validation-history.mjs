@@ -52,6 +52,25 @@ export async function validationChecks(api, sha) {
   }
   throw new Error('Incomplete validation attempt history');
 }
+export async function terminalAttemptTime(payload, readAttempt) {
+  try {
+    const run = await readAttempt(payload);
+    const completed = Date.parse(run.updated_at);
+    assert.ok(
+      run.status === 'completed' &&
+        String(run.id) === String(payload.runId) &&
+        run.run_attempt === Number(payload.runAttempt) &&
+        run.head_sha === payload.executorRevision &&
+        run.repository?.full_name === payload.executorRepository &&
+        Number.isFinite(completed) &&
+        completed >= Date.parse(payload.startedAt) &&
+        completed <= Date.now() + 60_000,
+    );
+    return completed + 999;
+  } catch {
+    return Infinity;
+  }
+}
 export async function beginEvidenceAttempt({
   api,
   snapshot,
@@ -330,18 +349,21 @@ export async function restoreEvidenceHistory(directory, options) {
           archive.cleanup?.();
         }
       } catch {
-        const terminal =
+        const checkTerminal =
           check.status === 'completed' &&
           Number.isFinite(Date.parse(check.completed_at));
-        cutoff = Math.max(
-          cutoff,
-          terminal ? Date.parse(check.completed_at) + 999 : Infinity,
-        );
+        const end = checkTerminal
+          ? Date.parse(check.completed_at) + 999
+          : await terminalAttemptTime(payload, options.readAttempt);
+        const terminal = Number.isFinite(end);
+        cutoff = Math.max(cutoff, end);
         diagnostics.fencedAttempts.push({
           checkId: check.id,
-          reason: terminal
+          reason: checkTerminal
             ? 'attempt-proof-unavailable'
-            : 'attempt-still-unsealed',
+            : terminal
+              ? 'terminal-attempt-without-proof'
+              : 'attempt-still-unsealed',
         });
         if (terminal) covered.add(check.id);
         else pendingHeads.add(check.head_sha);

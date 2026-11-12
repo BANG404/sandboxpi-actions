@@ -181,3 +181,10 @@ Before callback, a private reuse journal is reconciled against newly arrived
 history. Invalidated units re-enter the fixed suite once, preserving other valid
 unit receipts; a second invalidation fails closed. Project data and journals never
 enter public Actions storage or logs. Archive eviction selects fresh execution.
+
+Cancelled or timed-out executors may leave an in-progress App marker. Read the
+original run attempt with the protected executor's read-only Actions token; bind
+repository, executor SHA, run and attempt before using its completion time as a
+finite fence. Future fresh results can then seed reuse. Unavailable or foreign
+metadata retains the conservative pending fence. Legacy source ledgers lacking
+the scoped completion journal always execute units freshly.
