@@ -47,6 +47,19 @@ Every private child, including dependency installation, scanners and image
 commands, writes only to the private log. Public messages contain fixed phase,
 result and report identifiers. Trusted bootstrap failures and API status details
 are recorded only in the private report, preserving failed validation status.
+The image job also maintains a diagnostic **Image publication phases** check
+on the public executor commit. It exposes only allowlisted stage names, status
+and elapsed milliseconds, covering cache restore/export, build, runtime checks,
+scan, registry pushes, Tencent transfer and AGS activation. It cannot satisfy a
+private source/CD gate. Raw output remains private. The public package token can
+write this public diagnostic check but never enters the source environment.
+Image capture kills the complete process group on timeout. Docker builds allow
+30 minutes, pushes/pulls 15 minutes, metadata/auth 30 seconds; trusted cache and
+report transport commands allow five minutes each. Writes are never retried. The source image driver uploads to ACR through the
+existing pinned Skopeo plugin with one layer at a time, zero command retries and
+a 15-minute deadline. Only that ephemeral GitHub worker exposes its Docker socket
+to the tool; Tencent remains a registry-only relay.
+
 Read-only API/privacy requests close connections and retry transient network or
 429/5xx failures at most three times; ambiguous callback/dispatch writes never
 retry. This avoids stale pooled connections after synchronous source commands. Source environments use an allowlist without
