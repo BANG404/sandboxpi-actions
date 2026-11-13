@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { imageProgress, imageProgressLines } from './image-progress.mjs';
 import { publishSecurity, securityApi } from './security-summary.mjs';
 import {
   beginEvidenceAttempt,
@@ -37,7 +38,7 @@ export const dataPackage = 'ghcr.io/bang404/sandboxpi-ci-data';
 export function supportsEvidenceJournal(root) {
   try {
     const source = readFileSync(
-      join(root, 'scripts/validation-ledger.mjs'),
+      join(root, 'scripts/validation/validation-ledger.mjs'),
       'utf8',
     );
     return (
@@ -106,16 +107,43 @@ export function captured(
 export function capturedAsync(
   program,
   args,
-  { cwd, env, descriptor, input, optional = false, timeout = 85 * 60_000 },
+  {
+    cwd,
+    env,
+    descriptor,
+    input,
+    onOutput,
+    optional = false,
+    timeout = 85 * 60_000,
+  },
 ) {
   return new Promise((resolve, reject) => {
     let error;
     const child = spawn(program, args, {
       cwd,
       env,
-      stdio: [input === undefined ? 'ignore' : 'pipe', descriptor, descriptor],
+      detached: process.platform !== 'win32',
+      stdio: [
+        input === undefined ? 'ignore' : 'pipe',
+        onOutput ? 'pipe' : descriptor,
+        onOutput ? 'pipe' : descriptor,
+      ],
     });
-    const timer = setTimeout(() => child.kill('SIGKILL'), timeout);
+    if (onOutput) {
+      for (const stream of [child.stdout, child.stderr])
+        stream.on('data', (chunk) => {
+          writeSync(descriptor, chunk);
+          onOutput(chunk);
+        });
+    }
+    const timer = setTimeout(() => {
+      try {
+        if (process.platform !== 'win32') process.kill(-child.pid, 'SIGKILL');
+        else child.kill('SIGKILL');
+      } catch (cause) {
+        if (cause.code !== 'ESRCH') error = cause;
+      }
+    }, timeout);
     timer.unref();
     child.once('error', (cause) => {
       error = cause;
@@ -206,7 +234,7 @@ export function phaseCommands(phase) {
   if (phase === 'quality')
     commands.push(
       ['quality', 'bun', ['run', 'verify']],
-      ['security', 'node', ['scripts/test-gate.mjs', 'security']],
+      ['security', 'node', ['scripts/validation/test-gate.mjs', 'security']],
     );
   else if (phase === 'image')
     commands.push(
@@ -218,14 +246,18 @@ export function phaseCommands(phase) {
       ['image', 'bash', ['deploy/github/publish-ags.sh']],
     );
   else {
-    commands.push(['gate', 'node', ['scripts/test-gate.mjs', phase.slice(5)]]);
+    commands.push([
+      'gate',
+      'node',
+      ['scripts/validation/test-gate.mjs', phase.slice(5)],
+    ]);
     if (phase === 'gate-boundary')
       commands.push(
         ['runner-regressions', 'bun', ['run', 'test:gates']],
         [
           'workflow-regressions',
           'node',
-          ['--test', 'scripts/cd-workflow.test.mjs'],
+          ['--test', 'scripts/deployment/cd-workflow.test.mjs'],
         ],
       );
   }
@@ -304,6 +336,7 @@ export async function runPhase(environment) {
       cwd: temporary,
       env: trustedEnv,
       descriptor,
+      ...(phase === 'image' ? { timeout: 5 * 60_000 } : {}),
       ...options,
     });
   let privacy = false,
@@ -318,6 +351,7 @@ export async function runPhase(environment) {
   let cacheRestored = false;
   let evidenceAttempt, evidenceHistory, evidenceOptions;
   const commandTimings = [];
+  let progress;
   const bundle = (reference, paths, base) => {
     const context = mkdtempSync(join(temporary, 'bundle-'));
     try {
@@ -340,6 +374,10 @@ export async function runPhase(environment) {
     }
   };
   try {
+    if (phase === 'image') {
+      progress = await imageProgress(environment);
+      await progress.update('checkout', 'started');
+    }
     await revalidate(snapshot, github(environment.SOURCE_TOKEN));
     assert.ok(!existsSync(root), 'Private checkout already exists');
     mkdirSync(root);
@@ -364,7 +402,9 @@ export async function runPhase(environment) {
         '--tags',
         'origin',
         '+refs/heads/*:refs/remotes/origin/*',
-        snapshot.pr && snapshot.branch === 'alpha' ? snapshot.candidate : snapshot.ref,
+        snapshot.pr && snapshot.branch === 'alpha'
+          ? snapshot.candidate
+          : snapshot.ref,
       ],
       { cwd: root, env: gitEnv },
     );
@@ -394,6 +434,8 @@ export async function runPhase(environment) {
       (ref) => command('docker', ['manifest', 'inspect', ref]),
     );
     privacy = true;
+    await progress?.update('checkout', 'passed');
+    await progress?.update('cache-restore', 'started');
     for (const path of cachePaths)
       mkdirSync(join(root, path), { recursive: true });
     if (
@@ -429,9 +471,10 @@ export async function runPhase(environment) {
       }
     }
     cacheReady = true;
+    await progress?.update('cache-restore', 'passed');
     unitEvidence =
       phase !== 'image' &&
-      existsSync(join(root, 'scripts/validation-ledger.mjs'));
+      existsSync(join(root, 'scripts/validation/validation-ledger.mjs'));
     if (unitEvidence) {
       const api = github(environment.SOURCE_TOKEN);
       const localGit = (args) => {
@@ -586,6 +629,7 @@ export async function runPhase(environment) {
       timings: commandTimings,
       run: async ([stage, program, args], parallel) => {
         console.log(`Phase ${phase}: ${stage}`);
+        await progress?.update(stage, 'started');
         const env = { ...childEnv };
         if (stage === 'image')
           for (const key of [
@@ -601,9 +645,21 @@ export async function runPhase(environment) {
             'TENCENTCLOUD_SESSION_TOKEN',
           ])
             if (environment[key]) env[key] = environment[key];
-        if (parallel)
-          await capturedAsync(program, args, { cwd: root, env, descriptor });
+        if (parallel || phase === 'image')
+          await capturedAsync(program, args, {
+            cwd: root,
+            env,
+            descriptor,
+            ...(stage === 'image'
+              ? {
+                  onOutput: imageProgressLines((name, status) =>
+                    progress.update(name, status),
+                  ),
+                }
+              : {}),
+          });
         else captured(program, args, { cwd: root, env, descriptor });
+        await progress?.update(stage, 'passed');
         if (stage === 'scanner-setup')
           childEnv.PATH = `${childEnv.RUNNER_TEMP}/trivy-bin:${childEnv.PATH}`;
       },
@@ -628,7 +684,7 @@ export async function runPhase(environment) {
         const [program, ...args] =
           phase === 'quality'
             ? ['bun', 'run', 'verify']
-            : ['node', 'scripts/test-gate.mjs', phase.slice(5)];
+            : ['node', 'scripts/validation/test-gate.mjs', phase.slice(5)];
         await capturedAsync(program, args, {
           cwd: root,
           env: childEnv,
@@ -643,6 +699,7 @@ export async function runPhase(environment) {
     }
     await revalidate(snapshot, github(environment.SOURCE_TOKEN));
   } catch (error) {
+    await progress?.failActive();
     writeSync(
       descriptor,
       `\nPrivate bootstrap failure: ${error?.stack || String(error)}\n`,
@@ -665,6 +722,7 @@ export async function runPhase(environment) {
     }
     try {
       if (privacy && cacheReady) {
+        await progress?.update('cache-export', 'started');
         await verifyPrivateStorage(['sandboxpi-ci-data'], (ref) =>
           command('docker', ['manifest', 'inspect', ref]),
         );
@@ -682,8 +740,10 @@ export async function runPhase(environment) {
               ),
           });
         bundle(keys.cache, cachePaths, root);
+        await progress?.update('cache-export', 'passed');
       }
     } catch (error) {
+      await progress?.failActive();
       writeSync(
         descriptor,
         `\nPrivate cache export failure: ${error?.stack || String(error)}\n`,
@@ -691,6 +751,7 @@ export async function runPhase(environment) {
       failure = true;
     }
     try {
+      await progress?.update('report-export', 'started');
       assert.ok(privacy, 'Storage privacy gate blocked export');
       const report = join(temporary, 'report');
       mkdirSync(report);
@@ -713,11 +774,13 @@ export async function runPhase(environment) {
       );
       bundle(keys.report, ['.'], report);
       console.log(`Private report: ${keys.report}`);
+      await progress?.update('report-export', 'passed');
     } catch {
+      await progress?.failActive();
       failure = true;
     }
     if (
-      existsSync(join(root, 'scripts/security-open-source.mjs')) &&
+      existsSync(join(root, 'scripts/validation/security-open-source.mjs')) &&
       (phase === 'gate-security' || (phase === 'quality' && !snapshot.runGates))
     ) {
       try {
@@ -733,6 +796,11 @@ export async function runPhase(environment) {
       }
     }
     closeSync(descriptor);
+    try {
+      await progress?.finish(!failure);
+    } catch {
+      failure = true;
+    }
     rmSync(temporary, { recursive: true, force: true });
   }
   console.log(`Phase ${phase}: ${failure ? 'failure' : 'success'}`);

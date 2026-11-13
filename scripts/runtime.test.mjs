@@ -31,9 +31,9 @@ import {
 test('older source ledgers without the scoped completion journal execute fresh', (t) => {
   const root = mkdtempSync(join(tmpdir(), 'journal-capability-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  mkdirSync(join(root, 'scripts'));
+  mkdirSync(join(root, 'scripts/validation'), { recursive: true });
   assert.equal(supportsEvidenceJournal(root), false);
-  const path = join(root, 'scripts/validation-ledger.mjs');
+  const path = join(root, 'scripts/validation/validation-ledger.mjs');
   writeFileSync(path, 'VALIDATION_REUSE_JOURNAL');
   assert.equal(supportsEvidenceJournal(root), false);
   writeFileSync(path, 'VALIDATION_REUSE_JOURNAL VALIDATION_EVIDENCE_DIRECTORY');
@@ -261,7 +261,7 @@ test('full verify and all seven substantive gate commands are fixed, including r
   assert.deepEqual(phaseCommands('quality'), [
     ['dependencies', 'bun', ['install', '--frozen-lockfile']],
     ['quality', 'bun', ['run', 'verify']],
-    ['security', 'node', ['scripts/test-gate.mjs', 'security']],
+    ['security', 'node', ['scripts/validation/test-gate.mjs', 'security']],
   ]);
   const refs = new Set();
   for (const phase of [
@@ -276,7 +276,7 @@ test('full verify and all seven substantive gate commands are fixed, including r
       assert.deepEqual(phaseCommands(phase)[1], [
         'gate',
         'node',
-        ['scripts/test-gate.mjs', phase.slice(5)],
+        ['scripts/validation/test-gate.mjs', phase.slice(5)],
       ]);
   }
   assert.equal(refs.size, 18);
@@ -428,4 +428,27 @@ test('integration module caches stay private caches and never inflate diagnostic
     '.data/cd/trivy.json',
   ]);
   assert.throws(() => phaseCachePaths('untrusted'));
+});
+
+test('image capture kills descendants that retain output pipes at the deadline', async (t) => {
+  const root = directory(t),
+    descriptor = openSync(join(root, 'deadline.log'), 'w', 0o600);
+  t.after(() => closeSync(descriptor));
+  const sentinel = join(root, 'orphan-write');
+  const grandchild = `setTimeout(()=>require('node:fs').writeFileSync(${JSON.stringify(sentinel)},'orphan'),450);setInterval(()=>{},1000)`;
+  const script = `require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(grandchild)}],{stdio:'inherit'});setInterval(()=>{},1000)`;
+  const started = performance.now();
+  await assert.rejects(
+    capturedAsync(process.execPath, ['-e', script], {
+      cwd: root,
+      env: process.env,
+      descriptor,
+      timeout: 150,
+      onOutput: () => {},
+    }),
+    /SIGKILL/u,
+  );
+  assert.ok(performance.now() - started < 2000);
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  assert.equal(existsSync(sentinel), false);
 });

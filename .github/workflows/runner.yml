@@ -252,6 +252,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      checks: write
     concurrency:
       group: container-publication
       cancel-in-progress: false
