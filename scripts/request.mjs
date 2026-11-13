@@ -157,6 +157,28 @@ export async function validateRequest(input, api) {
 }
 export async function revalidate(snapshot, api) {
   const current = await validateRequest(snapshot, api);
+  if (snapshot.pr && snapshot.branch === 'alpha') {
+    // Freeze the tested merge candidate while allowing normal alpha advancement.
+    // Head changes, conflicts, permission loss and history rewrites still fail.
+    assert.deepEqual(current, {
+      ...snapshot,
+      base: current.base,
+      candidate: current.candidate,
+    });
+    if (current.base !== snapshot.base) {
+      const comparison = await api(
+        `/compare/${snapshot.base}...${current.base}`,
+      );
+      assert.ok(['ahead', 'identical'].includes(comparison.status));
+      assert.equal(comparison.merge_base_commit?.sha, snapshot.base);
+    }
+    const tested = await api(`/git/commits/${snapshot.candidate}`);
+    assert.deepEqual(
+      tested.parents?.map((parent) => parent.sha),
+      [snapshot.base, snapshot.sha],
+    );
+    return snapshot;
+  }
   // Channel CI still accepts an immutable ancestor after the channel advances.
   // PR checks bind to a particular base as well as the exact merge candidate.
   const expected = snapshot.pr ? snapshot : { ...snapshot, base: current.base };

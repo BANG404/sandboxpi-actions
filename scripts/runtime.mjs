@@ -364,7 +364,7 @@ export async function runPhase(environment) {
         '--tags',
         'origin',
         '+refs/heads/*:refs/remotes/origin/*',
-        snapshot.ref,
+        snapshot.pr && snapshot.branch === 'alpha' ? snapshot.candidate : snapshot.ref,
       ],
       { cwd: root, env: gitEnv },
     );

@@ -53,7 +53,13 @@ export async function discover(
       const sameSource = found.check_runs.filter(
         (check) =>
           check.app?.id === 5497722 &&
-          (check.output?.summary || '').split('\n').includes(baseMarker) &&
+          (input.branch === 'alpha'
+            ? (check.output?.summary || '')
+                .split('\n')
+                .filter((line) =>
+                  /^Sandboxpi source base: [a-f0-9]{40}$/u.test(line),
+                ).length === 1
+            : (check.output?.summary || '').split('\n').includes(baseMarker)) &&
           (check.output?.summary || '').split('\n').includes(branchMarker),
       );
       if (
