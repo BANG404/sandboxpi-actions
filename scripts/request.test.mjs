@@ -748,3 +748,41 @@ test('publish always requests the complete gate matrix and full scope; optional 
   assert.equal(publish.runGates, true);
   assert.equal(publish.fullScope, true);
 });
+
+test('unchanged alpha PR HEAD retains its frozen tested candidate after alpha advances', async () => {
+  const input = normalize(environment),
+    original = fixture();
+  const snapshot = await validateRequest(input, original);
+  const advanced = 'd'.repeat(40),
+    newMerge = 'e'.repeat(40);
+  const api = async (path) => {
+    const value = await original(
+      path.startsWith('/compare/')
+        ? `/compare/${head}...${base}`
+        : path === `/git/commits/${newMerge}`
+          ? `/git/commits/${merge}`
+          : path,
+    );
+    if (path === '/branches/alpha') return { commit: { sha: advanced } };
+    if (path === '/pulls/27')
+      return {
+        ...value,
+        base: { ...value.base, sha: advanced },
+        merge_commit_sha: newMerge,
+      };
+    if (path === '/git/ref/pull/27/merge') return { object: { sha: newMerge } };
+    if (path === `/git/commits/${newMerge}`)
+      return { parents: [{ sha: advanced }, { sha: head }] };
+    if (path.startsWith('/compare/'))
+      return { status: 'ahead', merge_base_commit: { sha: base } };
+    return value;
+  };
+  assert.deepEqual(await revalidate(snapshot, api), snapshot);
+  await assert.rejects(
+    revalidate(snapshot, async (path) =>
+      path.startsWith('/compare/')
+        ? { status: 'diverged', merge_base_commit: { sha: head } }
+        : api(path),
+    ),
+  );
+});

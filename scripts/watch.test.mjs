@@ -160,6 +160,21 @@ test('pending or failed current-source evidence prevents automatic duplicate val
     assert.equal(f.dispatches.length, 0);
   }
 });
+test('alpha advancement does not redispatch valid checks for the same PR HEAD', async () => {
+  const f = fixture({
+    checks: [
+      {
+        name: 'Public quality checks',
+        app: { id: 5497722 },
+        output: {
+          summary: `Sandboxpi source branch: alpha\nSandboxpi source base: ${'d'.repeat(40)}`,
+        },
+      },
+    ],
+  });
+  assert.equal(await discover(env, f.source, f.request), 0);
+  assert.equal(f.dispatches.length, 0);
+});
 test('forks, read-only authors and changed merge candidates receive no public execution', async () => {
   for (const change of ['fork', 'permission', 'base']) {
     const f = fixture({

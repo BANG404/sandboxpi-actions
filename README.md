@@ -23,8 +23,9 @@ and current base, and have a write/maintain/admin author. The sole bot exception
 protected channels with exact current source and base SHAs. Other bots, forks,
 feature heads, stale source heads and skipped/reverse stages are rejected. Forks are rejected.
 Only GitHub's merge ref is fetched and its exact merge SHA executed after its
-parents are verified as current base and requested head. Changed head, base,
-merge candidate, permissions or PR state invalidates PR success. Channel CI
+parents are verified as current base and requested head. Changed HEAD, conflicts, permissions or PR state invalidate PR success. For alpha,
+normal base advancement retains the original tested candidate and its ordered parents;
+history rewrites still fail. Other channels retain exact-base validation. Channel CI
 continues to accept an exact immutable ancestor after its channel advances. Private source
 workflow files are never executed as Actions workflows.
 
