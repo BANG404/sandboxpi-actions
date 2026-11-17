@@ -9,7 +9,9 @@ import {
   revalidate,
   validateRequest,
 } from './request.mjs';
-import { checkDefinitions, report } from './status.mjs';
+import { checkDefinitions, report as reportActual } from './status.mjs';
+const report = (mode, environment, api, output) =>
+  reportActual(mode, environment, api, output, async () => {});
 import {
   promotionFixture,
   promotionRejections,
@@ -508,6 +510,24 @@ test('callbacks use exact head, both names and protocol external IDs, and fail c
   );
   assert.equal(patches.length, 1);
   assert.ok(patches.every((patch) => patch.conclusion === 'failure'));
+  patches.length = 0;
+  await assert.rejects(
+    reportActual(
+      'quality',
+      finalEnv,
+      api,
+      () => {},
+      async () => {
+        throw new Error('upstream advanced');
+      },
+    ),
+  );
+  assert.equal(patches.length, 1);
+  assert.equal(
+    patches[0].conclusion,
+    'failure',
+    'Fresh upstream ancestry is mandatory even after source tests pass',
+  );
   checks[1].app.id = 1;
   patches.length = 0;
   await assert.rejects(report('quality', finalEnv, api));

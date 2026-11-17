@@ -202,3 +202,13 @@ repository, executor SHA, run and attempt before using its completion time as a
 finite fence. Future fresh results can then seed reuse. Unavailable or foreign
 metadata retains the conservative pending fence. Legacy source ledgers lacking
 the scoped completion journal always execute units freshly.
+
+## Video Claw upstream ancestry
+
+Protected CI admission and successful callbacks read the exact candidate lock and
+require current `sdtrc/video_claw/dev` plus the fork cumulative branch as ancestors.
+The Gitee compare API must prove each exact merge base; moved heads are rechecked.
+Configure `VIDEO_CLAW_UPSTREAM_TOKEN` in protected executor `release` and the intended
+private CD environments. It is used only by trusted GET-only controllers and never
+passed to source processes. Missing/read/stale evidence fails the actual App gates.
+CD repeats the gate before heavy work and immediately before rollout.

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { verifySnapshotVideo } from './video-upstream.mjs';
 import { appendFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -25,6 +26,7 @@ export async function report(
   api = github(environment.SOURCE_TOKEN),
   output = (key, value) =>
     appendFileSync(environment.GITHUB_OUTPUT, `${key}=${value}\n`),
+  verifyVideo = verifySnapshotVideo,
 ) {
   const input = normalize(environment);
   const definitions = checkDefinitions(input);
@@ -33,6 +35,7 @@ export async function report(
     const snapshot = await validateRequest(input, api);
     output('snapshot', JSON.stringify(snapshot));
     output('run_gates', String(input.runGates));
+    const created = {};
     for (const [phase, name] of Object.entries(definitions)) {
       const check = await api('/check-runs', 'POST', {
         name,
@@ -47,7 +50,24 @@ export async function report(
       });
       assert.equal(check.app?.id, 5497722, 'Unexpected callback App');
       assert.ok(Number.isSafeInteger(check.id) && check.id > 0);
+      created[phase] = check.id;
       output(`${phase}_id`, check.id);
+    }
+    try {
+      await verifyVideo(snapshot, api, environment);
+    } catch (error) {
+      for (const [phase, name] of Object.entries(definitions)) {
+        await api(`/check-runs/${created[phase]}`, 'PATCH', {
+          name,
+          status: 'completed',
+          conclusion: 'failure',
+          output: {
+            title: name,
+            summary: `Video Claw upstream ancestry gate failed. Refresh the managed source lock and restart alpha validation. ${error.message}`,
+          },
+        });
+      }
+      throw error;
     }
     return;
   }
@@ -64,7 +84,10 @@ export async function report(
     // Each required check validates the live candidate immediately before its
     // own callback. The final discovery receipt must not invalidate a PR that
     // already auto-merged after both callbacks became green.
-    if (mode !== 'finish' || definitions.image) await revalidate(snapshot, api);
+    if (mode !== 'finish' || definitions.image) {
+      await revalidate(snapshot, api);
+      await verifyVideo(snapshot, api, environment);
+    }
   } catch {
     for (const phase of Object.keys(results)) results[phase] = 'failure';
   }
