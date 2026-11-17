@@ -63,7 +63,7 @@ export async function report(
           conclusion: 'failure',
           output: {
             title: name,
-            summary: `Video Claw upstream ancestry gate failed. Refresh the managed source lock and restart alpha validation. ${error.message}`,
+            summary: `Video Claw locked source gate failed. Repair the source identity and reverify. ${error.message}`,
           },
         });
       }

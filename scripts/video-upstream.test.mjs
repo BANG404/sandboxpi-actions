@@ -45,63 +45,30 @@ function fixture() {
   };
   return { values, calls, api };
 }
-test('current upstream and cumulative commits must be ancestors of the exact locked branch', async () => {
+test('locked source passes independently of current upstream and cumulative heads', async () => {
   const f = fixture();
-  assert.deepEqual(await verifyVideoUpstream(lock, { api: f.api }), {
-    source,
-    upstream: base,
-    cumulative,
+  assert.deepEqual(await verifyVideoUpstream(lock, { api: f.api }), { source });
+  assert.deepEqual(f.calls, ['alx1501/video_claw/branches/codex%2Ftest']);
+  f.values.set('sdtrc/video_claw/branches/dev', {
+    commit: { sha: 'd'.repeat(40) },
   });
-  assert.equal(
-    f.calls.filter((path) => path === 'sdtrc/video_claw/branches/dev').length,
-    2,
-  );
-  for (const [path, value] of [
-    [
-      `alx1501/video_claw/compare/${base}...${source}`,
-      { base_commit: { sha: base }, merge_base_commit: { sha: cumulative } },
-    ],
-    [
-      `alx1501/video_claw/compare/${cumulative}...${source}`,
-      { base_commit: { sha: cumulative }, merge_base_commit: { sha: base } },
-    ],
-    ['alx1501/video_claw/branches/codex%2Ftest', { commit: { sha: base } }],
-  ]) {
-    const invalid = fixture();
-    invalid.values.set(path, value);
-    await assert.rejects(verifyVideoUpstream(lock, { api: invalid.api }));
-  }
-});
-test('an absent cumulative branch requires repository access, while moved heads and read failures block', async () => {
-  const f = fixture();
   f.values.set('alx1501/video_claw/branches/codex%2Fbeta-upstream', null);
-  assert.equal(
-    (await verifyVideoUpstream(lock, { api: f.api })).cumulative,
-    null,
+  assert.deepEqual(await verifyVideoUpstream(lock, { api: f.api }), { source });
+});
+test('moved locked sources and failed source reads block admission', async () => {
+  const f = fixture();
+  f.values.set('alx1501/video_claw/branches/codex%2Ftest', {
+    commit: { sha: base },
+  });
+  await assert.rejects(
+    verifyVideoUpstream(lock, { api: f.api }),
+    /branch moved/,
   );
-  for (const target of [
-    'sdtrc/video_claw/branches/dev',
-    'alx1501/video_claw/branches/codex%2Fbeta-upstream',
-  ]) {
-    const race = fixture();
-    let reads = 0;
-    await assert.rejects(
-      verifyVideoUpstream(lock, {
-        api: async (path) =>
-          path === target && ++reads === 2
-            ? { commit: { sha: 'd'.repeat(40) } }
-            : race.api(path),
-      }),
-      /moved during validation/,
-    );
-  }
-  const denied = fixture();
   await assert.rejects(
     verifyVideoUpstream(lock, {
-      api: (path) =>
-        path === 'alx1501/video_claw'
-          ? Promise.reject(Error('denied'))
-          : denied.api(path),
+      api: async () => {
+        throw Error('denied');
+      },
     }),
     /denied/,
   );
@@ -150,7 +117,7 @@ test('trusted reads use only allowlisted Gitee GET endpoints and never forward r
       !error.message.includes('fixture-secret'),
   );
 });
-test('missing or unbound source snapshots cannot supply ancestry proof', async () => {
+test('missing or unbound source snapshots cannot supply locked source proof', async () => {
   await assert.rejects(
     verifySnapshotVideo(
       { candidate: 'invalid' },
