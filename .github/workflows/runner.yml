@@ -90,6 +90,7 @@ jobs:
         id: request
         env:
           SOURCE_TOKEN: ${{ steps.source.outputs.token }}
+          VIDEO_CLAW_UPSTREAM_TOKEN: ${{ secrets.VIDEO_CLAW_UPSTREAM_TOKEN }}
         run: node scripts/status.mjs start
   runner:
     environment: release
@@ -129,6 +130,7 @@ jobs:
           PUBLIC_PHASE: quality
           SOURCE_SNAPSHOT: ${{ needs.prepare.outputs.snapshot }}
           SOURCE_TOKEN: ${{ steps.source.outputs.token }}
+          VIDEO_CLAW_UPSTREAM_TOKEN: ${{ secrets.VIDEO_CLAW_UPSTREAM_TOKEN }}
           GHCR_TOKEN: ${{ github.token }}
         run: node scripts/runtime.mjs
   gate:
@@ -174,6 +176,7 @@ jobs:
           PUBLIC_PHASE: gate-${{ matrix.gate }}
           SOURCE_SNAPSHOT: ${{ needs.prepare.outputs.snapshot }}
           SOURCE_TOKEN: ${{ steps.source.outputs.token }}
+          VIDEO_CLAW_UPSTREAM_TOKEN: ${{ secrets.VIDEO_CLAW_UPSTREAM_TOKEN }}
           GHCR_TOKEN: ${{ github.token }}
         run: node scripts/runtime.mjs
   quality_result:
@@ -203,6 +206,7 @@ jobs:
         if: always() && steps.source.outcome == 'success'
         env:
           SOURCE_TOKEN: ${{ steps.source.outputs.token }}
+          VIDEO_CLAW_UPSTREAM_TOKEN: ${{ secrets.VIDEO_CLAW_UPSTREAM_TOKEN }}
           SOURCE_SNAPSHOT: ${{ needs.prepare.outputs.snapshot }}
           QUALITY_ID: ${{ needs.prepare.outputs.quality_id }}
           JOB_NEEDS: ${{ toJSON(needs) }}
@@ -234,6 +238,7 @@ jobs:
         if: always() && steps.source.outcome == 'success'
         env:
           SOURCE_TOKEN: ${{ steps.source.outputs.token }}
+          VIDEO_CLAW_UPSTREAM_TOKEN: ${{ secrets.VIDEO_CLAW_UPSTREAM_TOKEN }}
           SOURCE_SNAPSHOT: ${{ needs.prepare.outputs.snapshot }}
           GATES_ID: ${{ needs.prepare.outputs.gates_id }}
           JOB_NEEDS: ${{ toJSON(needs) }}
@@ -293,6 +298,7 @@ jobs:
           PUBLIC_PHASE: image
           SOURCE_SNAPSHOT: ${{ needs.prepare.outputs.snapshot }}
           SOURCE_TOKEN: ${{ steps.source.outputs.token }}
+          VIDEO_CLAW_UPSTREAM_TOKEN: ${{ secrets.VIDEO_CLAW_UPSTREAM_TOKEN }}
           GHCR_TOKEN: ${{ github.token }}
           GITHUB_TOKEN: ${{ steps.release.outputs.token }}
           SKILL_SOURCES_TOKEN: ${{ secrets.SKILL_SOURCES_TOKEN }}
@@ -332,6 +338,7 @@ jobs:
         if: always() && steps.source.outcome == 'success'
         env:
           SOURCE_TOKEN: ${{ steps.source.outputs.token }}
+          VIDEO_CLAW_UPSTREAM_TOKEN: ${{ secrets.VIDEO_CLAW_UPSTREAM_TOKEN }}
           SOURCE_SNAPSHOT: ${{ needs.prepare.outputs.snapshot }}
           QUALITY_ID: ${{ needs.prepare.outputs.quality_id }}
           GATES_ID: ${{ needs.prepare.outputs.gates_id }}
