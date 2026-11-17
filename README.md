@@ -203,12 +203,13 @@ finite fence. Future fresh results can then seed reuse. Unavailable or foreign
 metadata retains the conservative pending fence. Legacy source ledgers lacking
 the scoped completion journal always execute units freshly.
 
-## Video Claw upstream ancestry
+## Video Claw locked source identity
 
 Protected CI admission and successful callbacks read the exact candidate lock and
-require current `sdtrc/video_claw/dev` plus the fork cumulative branch as ancestors.
-The Gitee compare API must prove each exact merge base; moved heads are rechecked.
+verify its source branch still points to the locked commit. Upstream dev advancement
+does not invalidate that source or require repeated CI/CD. The beta listener separately
+checks merge conflicts with current dev before Gitee PR submission.
 Configure `VIDEO_CLAW_UPSTREAM_TOKEN` in protected executor `release` and the intended
 private CD environments. It is used only by trusted GET-only controllers and never
-passed to source processes. Missing/read/stale evidence fails the actual App gates.
+passed to source processes. Missing credentials, failed reads or source identity drift fail the actual App gates.
 CD repeats the gate before heavy work and immediately before rollout.

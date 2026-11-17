@@ -36,7 +36,7 @@ export async function verifyVideoUpstream(
     (async (path, optional = false) => {
       assert.ok(
         token,
-        'Configure VIDEO_CLAW_UPSTREAM_TOKEN for upstream ancestry checks',
+        'Configure VIDEO_CLAW_UPSTREAM_TOKEN for locked source checks',
       );
       const response = await readResponse(
         (url, options) => request(url, { ...options, redirect: 'error' }),
@@ -47,7 +47,7 @@ export async function verifyVideoUpstream(
       assert.equal(
         response.status,
         200,
-        `Video Claw upstream read failed (HTTP ${response.status})`,
+        `Video Claw source read failed (HTTP ${response.status})`,
       );
       return response.json();
     });
@@ -64,44 +64,12 @@ export async function verifyVideoUpstream(
     );
     return value.commit.sha;
   };
-  const base = await branch(upstream, 'dev');
   assert.equal(
     await branch(source, lock.branch),
     lock.commit,
     'Locked Video Claw branch moved; refresh and reverify the source',
   );
-  const contains = async (ancestor) => {
-    if (ancestor === lock.commit) return;
-    const comparison = await read(
-      `${source}/compare/${ancestor}...${lock.commit}`,
-    );
-    assert.equal(
-      comparison.base_commit?.sha,
-      ancestor,
-      'Upstream comparison base changed',
-    );
-    assert.equal(
-      comparison.merge_base_commit?.sha,
-      ancestor,
-      'Video Claw source omits current upstream/cumulative history; merge it, update the lock and restart alpha CI/CD',
-    );
-  };
-  await contains(base);
-  // Verify repository access before interpreting an absent cumulative branch as empty.
-  await read(fork);
-  const cumulative = await branch(fork, 'codex/beta-upstream', true);
-  if (cumulative) await contains(cumulative);
-  assert.equal(
-    await branch(upstream, 'dev'),
-    base,
-    'Upstream dev moved during validation; restart with the latest source',
-  );
-  assert.equal(
-    await branch(fork, 'codex/beta-upstream', true),
-    cumulative,
-    'Cumulative Video Claw history moved during validation',
-  );
-  return { source: lock.commit, upstream: base, cumulative };
+  return { source: lock.commit };
 }
 
 export async function verifySnapshotVideo(snapshot, github, environment) {
